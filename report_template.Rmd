@@ -47,7 +47,7 @@ legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", params
 
 ```{r pressure, echo=FALSE}
 # Display the filtered data used for the PRC calculation
-knitr::kable(params$prcfiltered, col.names = c("Gene", "Variant_ID", "gnomAD_AF", "VARITY", "REVEL", "AlphaMissense", "Classification"), caption = "Filtered Data Used for PRC Calculation (Classification TRUE = Benign, FALSE = Pathogenic)")
+knitr::kable(params$prcfiltered, col.names = c("Gene", "HGVS_Pro", "gnomAD_AF", "VARITY", "REVEL", "AlphaMissense", "Classification"), caption = "Filtered Data Used for PRC Calculation (Classification TRUE = Benign, FALSE = Pathogenic)")
 ```
 
 

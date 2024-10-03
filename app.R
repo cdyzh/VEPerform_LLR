@@ -279,7 +279,7 @@ server <- function(input, output, session) {
               <li><b>varity_r:</b> VARITY score</li>
               <li><b>alphamissense:</b> AlphaMissense score</li>
               <li><b>revel:</b> REVEL score</li>
-              <li><b>classification:</b> TRUE for Pathogenic, FALSE for Benign</li>
+              <li><b>classification:</b> FALSE for Pathogenic, TRUE for Benign</li>
             </ul>
             <h4>Option 2: Gene and HGVS (Protein) Only</h4>
             <p>Upload a CSV file with the following columns:</p>
