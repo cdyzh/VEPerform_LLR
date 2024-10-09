@@ -7,6 +7,10 @@ library(rsconnect)
 library(rmarkdown)
 library(knitr)
 library(tinytex)
+library(httr)
+library(jsonlite)
+library(shinycssloaders)
+library(DT)
 
 # Define UI for the application
 ui <- fluidPage(
@@ -27,16 +31,19 @@ ui <- fluidPage(
                       p("You can either use our pre-existing dataset, fetch data live, or upload your own dataset."),
                       
                       # Radio buttons for selecting between using an existing dataset or uploading a new one
+                      # FIXME: used html formatting for boldfacing this. Make front-end consistent later. 
                       radioButtons("intro_data_source", "Please select an option:",
-                                   choices = list(
-                                     "Use Pre-existing Dataset" = "existing", 
-                                     "Upload Your Own Dataset" = "upload"
+                                   choiceNames = list(
+                                     tags$span(tags$b("Use pre-existing dataset:"), tags$br(), "the quickest way to generate a PRC"),
+                                     tags$span(tags$b("Fetch variant data live from openCRAVAT:"), tags$br(), "for the most up-to-date scores and annotations"),
+                                     tags$span(tags$b("Upload your own dataset:"), tags$br(), "if you have your own data and just want to use the PRC generating tool")
                                    ),
+                                   choiceValues = list("existing", "fetch", "upload"),
                                    selected = "existing"),
                       
                       # Link to API
                       p("You can also interact with the VEPerform API ", 
-                        a("here", href = "http://localhost:8000", target = "_blank")),
+                        a("here", href = "http://127.0.0.1:4697/", target = "_blank")),
                       
                       # Action button to proceed
                       actionButton("proceed_button", "Proceed", class = "btn-success")
@@ -77,6 +84,54 @@ ui <- fluidPage(
                )
              )
     ),
+    
+    tabPanel("Fetch Live", 
+             sidebarLayout(
+               sidebarPanel(
+                 radioButtons("input_type", "Select Input Type:",
+                              choices = list("Chromosome, Position, Ref, Alt" = "chrom_pos",
+                                             "Transcript ID and HGVSC" = "hgvsc")),
+                 
+                 # File input for Chromosome, Position, Reference_Base, Alternate_Base
+                 conditionalPanel(
+                   condition = "input.input_type == 'chrom_pos'",
+                   fileInput("variant_file", "Upload CSV File (Chromosome, Position, Reference, Alternate)",
+                             accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
+                 ),
+                 
+                 # File input for Transcript ID and HGVSC
+                 conditionalPanel(
+                   condition = "input.input_type == 'hgvsc'",
+                   fileInput("variant_file_hgvsc", "Upload CSV File (Transcript ID, HGVSC)",
+                             accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
+                 ),
+                 
+                 # Option to run OpenCRAVAT and fetch the scores
+                 actionButton("fetchButton", "Fetch VEP Data"),
+                 
+                 # Additional controls for the plot
+                 checkboxInput("Fetch_common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
+                 checkboxGroupInput("Fetch_scores", "Select Scores to Include:",
+                                    choices = list(
+                                      "VARITY",
+                                      "REVEL",
+                                      "AlphaMissense"
+                                    ),
+                                    selected = c("VARITY", "REVEL", "AlphaMissense")
+                 ),
+                 actionButton("Fetch_plotButton", "Generate PRC Plot"),
+                 downloadButton("Fetch_downloadPlotPNG", "Download PRC Plot as PNG"),
+                 downloadButton("Fetch_downloadPlotPDF", "Download PRC Plot and Metadata"),
+                 helpText("Upload a CSV file with columns: Chromosome, Position, Reference_Base, Alternate_Base, or Transcript ID and HGVSC.")
+               ),
+               
+               mainPanel(
+                 plotOutput("Fetch_prcPlot", width = "600px", height = "600px"),
+                 textOutput("Fetch_errorText")
+               )
+             )
+             
+          ),
     
     # Upload Your Own Dataset Tab
     tabPanel("Upload",
