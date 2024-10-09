@@ -24,7 +24,7 @@ ui <- fluidPage(
                column(6, offset = 3,
                       h2("Welcome to VEPerform"),
                       p("This tool allows you to evaluate the performance of variant effect predictors."),
-                      p("You can either use our pre-existing dataset or upload your own dataset to evaluate a subset of variants."),
+                      p("You can either use our pre-existing dataset, fetch data live, or upload your own dataset."),
                       
                       # Radio buttons for selecting between using an existing dataset or uploading a new one
                       radioButtons("intro_data_source", "Please select an option:",
@@ -51,7 +51,7 @@ ui <- fluidPage(
                  # Radio buttons to select between uploading a dataset or using an existing one
                  radioButtons("data_source", "Choose Dataset:",
                               choices = list("Use Existing Full Dataset" = "existing", 
-                                             "Upload Your Own Dataset to Select Subset of Variants" = "upload"),
+                                             "Select Subset of Variants" = "upload"),
                               selected = "existing"),
                  
                  # Conditional panel that shows upload options if the user chooses to upload their own dataset
@@ -62,18 +62,18 @@ ui <- fluidPage(
                    actionButton("upload_guide_existing", "Upload Guide", class = "btn-info")
                  ),
                  
-                 selectizeInput("gene", "Select Gene Name:", choices = NULL, options = list(maxOptions = 1000)),
-                 checkboxInput("common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
-                 checkboxGroupInput("scores", "Select Scores to Include:",
+                 selectizeInput("Main_gene", "Select Gene Name:", choices = NULL, options = list(maxOptions = 1000)),
+                 checkboxInput("Main_common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
+                 checkboxGroupInput("Main_scores", "Select Scores to Include:",
                                     choices = list("VARITY", "REVEL", "AlphaMissense"),
                                     selected = c("VARITY", "REVEL", "AlphaMissense")),
-                 actionButton("plotButton", "Generate PRC Plot"),
-                 downloadButton("downloadPlotPNG", "Download PRC Plot as PNG"),
-                 downloadButton("downloadPlotPDF", "Download PRC Plot and Metadata")
+                 actionButton("Main_plotButton", "Generate PRC Plot"),
+                 downloadButton("Main_downloadPlotPNG", "Download PRC Plot as PNG"),
+                 downloadButton("Main_downloadPlotPDF", "Download PRC Plot and Metadata")
                ),
                mainPanel(
-                 plotOutput("prcPlot", width = "600px", height = "600px"),
-                 textOutput("errorText")
+                 plotOutput("Main_PRCPlot", width = "600px", height = "600px"),
+                 textOutput("Main_ErrorText")
                )
              )
     ),
