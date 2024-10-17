@@ -3,6 +3,7 @@ library(plumber)
 library(shiny)
 library(dplyr)
 library(yogiroc)
+options("plumber.port" = 8000)
 
 #* @apiTitle VEPerform API
 #* @apiDescription This API provides access to VEPerform's functionalities.
@@ -42,8 +43,9 @@ function(gene, scores = "VARITY,REVEL,AlphaMissense", common_variant_filter = TR
     df <- df[is.na(df$gnomAD_AF) | df$gnomAD_AF <= 0.005, ]
   }
   
-  # Filter data for the selected gene
-  prcfiltered <- df %>% filter(base__hugo == gene)
+  # Filter data for the selected gene, ignoring case (case-insensitive)
+  gene <- tolower(gene)
+  prcfiltered <- df %>% filter(tolower(base__hugo) == gene)
   
   # Generate the PRC plot
   B_org <- sum(prcfiltered$classification == TRUE & rowSums(!is.na(prcfiltered[scores_list])) > 0)
@@ -67,21 +69,18 @@ function(gene, scores = "VARITY,REVEL,AlphaMissense", common_variant_filter = TR
   })
 }
 
-#* Generate a PDF report based on provided parameters
+#* Output the reference set used for PRC plot generation in JSON format
 #* @param gene The gene name
 #* @param scores A comma-separated list of scores (e.g., "VARITY,REVEL,AlphaMissense")
 #* @param common_variant_filter Should common variants be excluded? (TRUE/FALSE)
-#* @post /generate_report
-#* @serializer contentType list(type="application/pdf")
+#* @get /get_referenceset
+#* @serializer json
 function(gene, scores = "VARITY,REVEL,AlphaMissense", common_variant_filter = TRUE) {
   scores_list <- unlist(strsplit(scores, ","))
   common_variant_filter <- as.logical(common_variant_filter)
   
   # Load the data
   df <- read.csv("preprocessed_id.csv", stringsAsFactors = FALSE)
-  
-  # Clean column names to avoid NA or empty names
-  df <- df[, !is.na(colnames(df)) & colnames(df) != ""]
   
   # Standardize column names to match Shiny app
   colnames(df) <- c(
@@ -99,26 +98,10 @@ function(gene, scores = "VARITY,REVEL,AlphaMissense", common_variant_filter = TR
     df <- df[is.na(df$gnomAD_AF) | df$gnomAD_AF <= 0.005, ]
   }
   
-  # Filter data for the selected gene
-  prcfiltered <- df %>% filter(base__hugo == gene)
+  # Filter data for the selected gene, ignoring case (case-insensitive)
+  gene <- tolower(gene)
+  prcfiltered <- df %>% filter(tolower(base__hugo) == gene)
   
-  # Generate the report using RMarkdown
-  tmp <- tempfile(fileext = ".pdf")
-  tryCatch({
-    rmarkdown::render(input = "report_template.Rmd",
-                      output_file = tmp,
-                      params = list(
-                        gene_s = gene,
-                        selected_scores = scores_list,
-                        B_org = sum(prcfiltered$classification == TRUE & rowSums(!is.na(prcfiltered[scores_list])) > 0),
-                        P_org = sum(prcfiltered$classification == FALSE & rowSums(!is.na(prcfiltered[scores_list])) > 0),
-                        prcfiltered = prcfiltered
-                      ),
-                      envir = new.env(parent = globalenv()))
-    
-    # Return the PDF as a response
-    readBin(tmp, "raw", n = file.info(tmp)$size)
-  }, error = function(e) {
-    stop("Not enough data to generate PDF report.")
-  })
+  # Return the filtered dataframe as JSON
+  prcfiltered
 }

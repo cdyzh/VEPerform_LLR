@@ -19,7 +19,7 @@ server <- function(input, output, session) {
   # Observe the Proceed button to switch tabs
   observeEvent(input$proceed_button, {
     if (input$intro_data_source == "upload") {
-      updateNavbarPage(session, "navbar", selected = "Upload")
+      updateNavbarPage(session, "navbar", selected = "Custom")
     } else if (input$intro_data_source == "fetch") {
       updateNavbarPage(session, "navbar", selected = "Fetch Live")
     } else {
@@ -155,7 +155,7 @@ server <- function(input, output, session) {
       # Download logic for Main App
       output$Main_downloadPlotPNG <- downloadHandler(
         filename = function() {
-          paste("PRC_plot_", input$gene, ".png", sep = "")
+          paste("PRC_plot_", input$Main_gene, ".png", sep = "")
         },
         content = function(file) {
           plot_info <- plot_data()
@@ -171,7 +171,7 @@ server <- function(input, output, session) {
       
       output$Main_downloadPlotPDF <- downloadHandler(
         filename = function() {
-          paste("PRC_Report_", input$gene, ".pdf", sep = "")
+          paste("PRC_Report_", input$Main_gene, ".pdf", sep = "")
         },
         content = function(file) {
           plot_info <- plot_data()
@@ -190,7 +190,23 @@ server <- function(input, output, session) {
           }
         }
       )
-      
+      # Download prcfiltered as CSV
+      output$downloadCSV <- downloadHandler(
+        filename = function() {
+          paste("PRC_filtered_", input$Main_gene, ".csv", sep = "")
+        },
+        content = function(file) {
+          df <- prcdata()  # Get the reactive data
+          gene_s <- input$Main_gene
+          
+          # Filter data for the selected gene
+          prcfiltered <- df %>%
+            filter(base__hugo == gene_s)
+          
+          # Write the prcfiltered dataframe to CSV
+          write.csv(prcfiltered, file, row.names = FALSE)
+        }
+      )
     } 
     else if (input$navbar == "Fetch Live") {
       # logic for fetch
