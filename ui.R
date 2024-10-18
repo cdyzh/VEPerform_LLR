@@ -64,9 +64,10 @@ ui <- fluidPage(
                  # Conditional panel that shows upload options if the user chooses to upload their own dataset
                  conditionalPanel(
                    condition = "input.data_source == 'upload'",
+                   helpText("Using the outputted CSV, delete the rows for variants you would like to remove and keep only the gene and hgvs_pro columns." ),
                    fileInput("file_gene_variant", "Upload Gene and HGVS_Pro CSV File", 
-                             accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv")),
-                   actionButton("upload_guide_existing", "Upload Guide", class = "btn-info")
+                             accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
+                   # actionButton("upload_guide_existing", "Upload Guide", class = "btn-info")
                  ),
                  
                  selectizeInput("Main_gene", "Select Gene Name:", choices = NULL, options = list(maxOptions = 1000)),
@@ -139,15 +140,15 @@ ui <- fluidPage(
     tabPanel("Custom",
              sidebarLayout(
                sidebarPanel(
-                 fileInput("file_full", "Upload Full Dataset CSV File", 
+                 fileInput("file_full", "Upload Full Reference Set CSV File", 
                            accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv")),
                  actionButton("upload_guide", "Upload Guide", class = "btn-info"),
                  
                  selectizeInput("gene", "Select Gene Name:", choices = NULL, options = list(maxOptions = 1000)),
-                 checkboxInput("common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
-                 checkboxGroupInput("scores", "Select Scores to Include:",
-                                    choices = list("VARITY", "REVEL", "AlphaMissense"),
-                                    selected = c("VARITY", "REVEL", "AlphaMissense")),
+                 # Common variant filter is moved to server logic
+                 # checkboxInput("common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE), 
+                 # Set choices to NULL initially, to be updated dynamically
+                 checkboxGroupInput("scores", "Select Scores to Include:", choices = NULL, selected = NULL),
                  actionButton("plotButton", "Generate PRC Plot"),
                  downloadButton("downloadPlotPNG", "Download PRC Plot as PNG"),
                  downloadButton("downloadPlotPDF", "Download PRC Plot and Metadata as PDF")
