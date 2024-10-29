@@ -15,6 +15,7 @@ library(DT)
 # Define server logic for the application
 server <- function(input, output, session) {
   plot_data <- reactiveVal(NULL)
+  selected_variants <- reactiveVal(NULL)  # Store user-selected variants
   
   # Observe the Proceed button to switch tabs
   observeEvent(input$proceed_button, {
@@ -31,6 +32,7 @@ server <- function(input, output, session) {
   observe({
     if (input$navbar == "Main App") {
       # prcdata logic for Main App
+      # prcdata logic for Main App
       prcdata <- reactive({
         if (input$data_source == "upload" && !is.null(input$file_gene_variant)) {
           req(input$file_gene_variant)
@@ -44,19 +46,20 @@ server <- function(input, output, session) {
               footer = modalButton("Close")
             ))
             reset("file_gene_variant")
-            updateFileInput(session, "file_gene_variant", value = NULL) # TODO: error handling
+            updateFileInput(session, "file_gene_variant", value = NULL)
             return(NULL)
           }
           
           colnames(df) <- c("base__gene", "base__achange")
-          full_df <- read.csv("preprocessed_id.csv", stringsAsFactors = FALSE)
+          full_df <- read.csv("preprocessed_id_revstat.csv", stringsAsFactors = FALSE)
           df <- merge(df, full_df, by = c("base__gene", "base__achange"))
         } else {
-          df <- read.table("preprocessed_id.csv", sep = ',', header = TRUE, stringsAsFactors = FALSE)
+          df <- read.table("preprocessed_id_revstat.csv", sep = ',', header = TRUE, stringsAsFactors = FALSE)
         }
         return(df)
       })
       
+      # Update gene names
       observe({
         df <- prcdata()
         if (!is.null(df)) {
@@ -65,10 +68,11 @@ server <- function(input, output, session) {
         }
       })
       
+      # Update scores
       observe({
         req(input$Main_gene)
         df <- prcdata()
-        gene_data <- df %>% filter(base__gene == input$gene)
+        gene_data <- df %>% filter(base__gene == input$Main_gene)
         
         available_scores <- c()
         if (any(!is.na(gene_data$varity_r))) {
@@ -81,72 +85,129 @@ server <- function(input, output, session) {
           available_scores <- c(available_scores, "REVEL")
         }
         
-        updateCheckboxGroupInput(session, "scores", choices = available_scores, selected = available_scores)
+        updateCheckboxGroupInput(session, "Main_scores", choices = available_scores, selected = available_scores)
       })
       
-      # Plotting logic for Main App
+      # Function to show modal with variant selection
+      showVariantSelectionModal <- function(df, gene_selected) {
+        
+        # Create a modified dataframe for display
+        gene_display_df <- df %>% filter(base__gene == gene_selected) %>%
+          select(base__gene, base__achange, classification, revstat, stars) %>%
+          mutate(classification = ifelse(classification == TRUE, "B/LB", "P/LP"))
+        
+        
+        showModal(modalDialog(
+          title = paste("Select Variants for Gene:", gene_selected),
+          tags$p("Would you like to de-select some variants? Click on the variants you do not want to include in the PRC. You can also do this later by downloading the csv, removing variants yourself, and uploading it back."),
+          DTOutput("variant_table"),
+          footer = tagList(
+            modalButton("Cancel"),
+            actionButton("confirm_selection", "OK")
+          ),
+          easyClose = FALSE
+        ))
+        
+        # Render the interactive table with checkboxes for the filtered dataframe
+        output$variant_table <- renderDT({
+          datatable(
+            gene_display_df, 
+            selection = list(target = "row", selected = 1:nrow(gene_display_df)),  # All rows selected by default
+            options = list(pageLength = 10, scrollX = TRUE)
+          )
+        }, server = TRUE)
+      }
+      
+      # Generate PRC and open modal for variant selection
       observeEvent(input$Main_plotButton, {
-        df <- prcdata()
-        gene_s <- input$Main_gene
-        exclude_common_variants <- input$Main_common_variant_filter
-        selected_scores <- input$Main_scores
+        df <- prcdata()  # Filtered dataframe
+        selected_gene <- input$Main_gene  # Get the selected gene
         
-        names(df)[names(df) == "varity_r"] <- "VARITY"
-        names(df)[names(df) == "alphamissense__pathogenicity"] <- "AlphaMissense"
-        names(df)[names(df) == "revel__score"] <- "REVEL"
-        names(df)[names(df) == "gnomad__af"] <- "gnomAD_AF"
-        
-        if (exclude_common_variants) {
-          df <- df[is.na(df$gnomAD_AF) | df$gnomAD_AF <= 0.005, ]
+        if (!is.null(df)) {
+          showVariantSelectionModal(df, selected_gene)  # Show modal with filtered variants for the selected gene
         }
+      })
+      
+      # Handle the confirmation from the modal
+      observeEvent(input$confirm_selection, {
+        selected_rows <- input$variant_table_rows_selected  # Get selected rows from the table
+        df <- prcdata()
         
-        df <- df[order(df$classification), ]
-        
-        prcfiltered <- df %>%
-          filter(base__gene == gene_s)
-        
-        B_org <- sum(prcfiltered$classification == TRUE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
-        P_org <- sum(prcfiltered$classification == FALSE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
-        
-        tryCatch({
-          yrobj <- yr2(truth = prcfiltered[["classification"]], scores = prcfiltered[selected_scores], high = rep(FALSE, length(selected_scores)))
+        if (!is.null(df) && length(selected_rows) > 0) {
+          # Update the selected variants based on the user's choice
+          selected_df <- df[selected_rows, ]
+          selected_variants(selected_df)
           
-          plot_data(list(
-            yrobj = yrobj,
-            lty_styles = c("dashed", "solid", "dashed")[1:length(selected_scores)],
-            col_styles = c("purple", "cadetblue2", "orange")[1:length(selected_scores)],
-            gene_s = gene_s,
-            selected_scores = selected_scores,
-            B_org = B_org,
-            P_org = P_org,
-            prcfiltered = prcfiltered  # Save the filtered data for metadata
-          ))
-
-          output$Main_ErrorText <- renderText("")
+          # Proceed with the PRC generation using the selected variants
+          gene_s <- input$Main_gene
+          exclude_common_variants <- input$Main_common_variant_filter
+          selected_scores <- input$Main_scores
+          print("begin plot with selected variants") # DEBUG
           
-        }, error = function(e) {
-          plot_data(NULL)
-          output$Main_ErrorText <- renderText("Not enough data")
-        })
-        
-        output$Main_PRCPlot <- renderPlot({
-          plot_info <- plot_data()
-          print(plot_info)
-          if (!is.null(plot_info)) {
-            tryCatch({
-              draw.prc(plot_info$yrobj, lty = plot_info$lty_styles, col = plot_info$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", ")))
-              abline(h = 90, lty = "dashed")
-              legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org), paste("# of Benign and Likely Benign:", plot_info$B_org)), pch = 15, bty = "n")
-            }, error = function(e) {
-              showModal(modalDialog(
-                title = 'Error',
-                'Not enough data 2',
-                easyClose = TRUE,
-                footer = NULL
-              ))
-            })
+          names(selected_df)[names(selected_df) == "varity_r"] <- "VARITY"
+          names(selected_df)[names(selected_df) == "alphamissense__pathogenicity"] <- "AlphaMissense"
+          names(selected_df)[names(selected_df) == "revel__score"] <- "REVEL"
+          names(selected_df)[names(selected_df) == "gnomad__af"] <- "gnomAD_AF"
+          
+          if (exclude_common_variants) {
+            selected_df <- selected_df[is.na(selected_df$gnomAD_AF) | selected_df$gnomAD_AF <= 0.005, ]
           }
-        }, width = 600, height = 600, res = 72)
+          
+          selected_df <- selected_df[order(selected_df$classification), ]
+          
+          print(selected_df) # DEBUG
+          
+          B_org <- sum(selected_df$classification == TRUE & rowSums(!is.na(selected_df[selected_scores])) > 0)
+          P_org <- sum(selected_df$classification == FALSE & rowSums(!is.na(selected_df[selected_scores])) > 0)
+          
+          tryCatch({
+            yrobj <- yr2(truth = selected_df[["classification"]], scores = selected_df[selected_scores], high = rep(FALSE, length(selected_scores)))
+            
+            plot_data(list(
+              yrobj = yrobj,
+              lty_styles = c("dashed", "solid", "dashed")[1:length(selected_scores)],
+              col_styles = c("purple", "cadetblue2", "orange")[1:length(selected_scores)],
+              gene_s = gene_s,
+              selected_scores = selected_scores,
+              B_org = B_org,
+              P_org = P_org,
+              prcfiltered = selected_df  # Save the filtered data for metadata
+            ))
+            print("plot success with selected variants")  # DEBUG
+            output$Main_ErrorText <- renderText("")
+            
+          }, error = function(e) {
+            plot_data(NULL)
+            output$Main_ErrorText <- renderText("Not enough data")
+          })
+          
+          output$Main_PRCPlot <- renderPlot({
+            plot_info <- plot_data()
+            if (!is.null(plot_info)) {
+              tryCatch({
+                draw.prc(plot_info$yrobj, lty = plot_info$lty_styles, col = plot_info$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", ")))
+                abline(h = 90, lty = "dashed")
+                legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org), paste("# of Benign and Likely Benign:", plot_info$B_org)), pch = 15, bty = "n")
+              }, error = function(e) {
+                showModal(modalDialog(
+                  title = 'Error',
+                  'Not enough data',
+                  easyClose = TRUE,
+                  footer = NULL
+                ))
+              })
+            }
+          }, width = 600, height = 600, res = 72)
+          
+          removeModal()  # Close the modal after the user clicks "OK"
+        } else {
+          showModal(modalDialog(
+            title = "Error",
+            "Please select at least one variant.",
+            easyClose = TRUE,
+            footer = modalButton("Close")
+          ))
+        }
       })
       
       # Download logic for Main App
@@ -190,7 +251,7 @@ server <- function(input, output, session) {
       # Download prcfiltered as CSV
       output$downloadCSV <- downloadHandler(
         filename = function() {
-          paste("PRC_filtered_", input$Main_gene, ".csv", sep = "")
+          paste("PRC_data_", input$Main_gene, ".csv", sep = "")
         },
         content = function(file) {
           df <- prcdata()  # Get the reactive data
@@ -279,23 +340,43 @@ server <- function(input, output, session) {
                 "&alt_base=", alt,
                 "&annotators=clinvar,gnomad,varity_r,revel,alphamissense"
               )
+              
+              # Make the GET request to OpenCRAVAT
+              response <- GET(api_url)
+              
+              # Parse the JSON response
+              result <- fromJSON(content(response, "text"), flatten = TRUE)
+              
+              print(result) # DEBUG
+              
             } else if (input$input_type == "hgvsc") {
               hgvsc_input <- df$OpenCRAVAT_Input[i]
               
               print(hgvsc_input) # DEBUG
-              # Construct API URL for HGVSC input
-              api_url <- paste0(
-                "https://run.opencravat.org/submit/annotate?",
-                "hgvs=", hgvsc_input,
-                "&annotators=clinvar,gnomad,varity_r,revel,alphamissense"
+              
+              # Define the endpoint
+              api_url <- "https://run.opencravat.org/submit/annotate"
+              
+              # Create the body of the POST request
+              body <- list(
+                hgvs = hgvsc_input
               )
+              
+              # Send the POST request to the API
+              response <- POST(
+                url = api_url,
+                body = toJSON(body),
+                encode = "json",
+                content_type_json()
+              )
+              
+              # Parse the JSON response
+              result <- content(response, as = "parsed")
+              
+              # Print the response (or handle it as needed)
+              print(result) # DEBUG
+              
             }
-            
-            # Make the GET request to OpenCRAVAT
-            response <- GET(api_url)
-            
-            # Parse the JSON response
-            result <- fromJSON(content(response, "text"), flatten = TRUE)
             
             # Handle cases where certain annotations might be missing
             clinvar_sig <- ifelse(!is.null(result$clinvar$sig), result$clinvar$sig, NA)
@@ -313,7 +394,7 @@ server <- function(input, output, session) {
             }
             
             # Extract into corresponding columns - TODO: be able to add additional predictors
-            gene <- ifelse(!is.null(result$crx$gene), result$crx$gene, NA)
+            gene <- ifelse(!is.null(result$crx$hugo), result$crx$hugo, NA)
             achange <- ifelse(!is.null(result$crx$achange), result$crx$achange, NA)
             gnomad_af <- ifelse(!is.null(result$gnomad$af), result$gnomad$af, NA)
             varity_r <- ifelse(!is.null(result$varity_r$varity_r), result$varity_r$varity_r, NA)
@@ -322,12 +403,12 @@ server <- function(input, output, session) {
             
             # Create a data frame with consistent column names
             result_df <- data.frame(
-              base__hugo = gene,
+              base__gene = gene,
               base__achange = achange,
               gnomad__af = gnomad_af,
-              varity_r__varity_r = varity_r,
+              varity_r = varity_r,
               revel__score = revel_score,
-              alphamissense__am_pathogenicity = alphamissense_path,
+              alphamissense__pathogenicity = alphamissense_path,
               classification = classification,
               stringsAsFactors = FALSE
             )

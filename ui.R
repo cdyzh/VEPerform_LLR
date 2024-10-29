@@ -53,6 +53,14 @@ ui <- fluidPage(
     
     # Main App (Use Pre-existing Dataset) Tab
     tabPanel("Main App",
+             fluidPage(
+             # Introductory Text
+             tags$h3("Welcome to the Main App"),
+             tags$p("This page allows you to evaluate the performance of variant effect predictors for specific genes. Select a gene to start.
+                   You can use our pre-existing dataset or upload your own dataset to select a subset of variants for analysis. 
+                   After selecting your gene and the scores you’d like to include, generate a Precision-Recall Curve (PRC) to 
+                   visualize prediction performance. You can also view and deselect specific variants before plotting. "),
+             
              sidebarLayout(
                sidebarPanel(
                  # Radio buttons to select between uploading a dataset or using an existing one
@@ -85,14 +93,22 @@ ui <- fluidPage(
                  textOutput("Main_ErrorText")
                )
              )
+          )
     ),
     
     tabPanel("Fetch Live", 
+             fluidPage(
+               # Introductory Text
+               tags$h3("Fetch Data from ClinVar, GnomAD, and OpenCRAVAT"),
+               tags$p("This option offers maximal input customizability but takes longer to run. In this section, 
+                    you can dynamically create a dataset with custom ClinVar filters and additional 
+                    proxy-benign variants from GnomAD. This is then fed into OpenCRAVAT for variant predictor scores."),
+               
              sidebarLayout(
                sidebarPanel(
                  radioButtons("input_type", "Select Input Type:",
                               choices = list("Chromosome, Position, Reference_Base, Alternate_Base" = "chrom_pos",
-                                             "Transcript ID and HGVSC" = "hgvsc")),
+                                             "Transcript ID and HGVSC (in development)" = "hgvsc")),
                  
                  # File input for Chromosome, Position, Reference_Base, Alternate_Base
                  conditionalPanel(
@@ -133,11 +149,18 @@ ui <- fluidPage(
                  textOutput("Fetch_errorText")
                )
              )
+             )
              
           ),
     
     # Upload Your Own Dataset Tab
     tabPanel("Custom",
+             fluidPage(
+               # Introductory Text
+               tags$h3("Upload Your Own Dataset"),
+               tags$p("In this section, you can upload your own custom reference set. 
+                   Ensure your file format aligns with the required specifications. Once uploaded, you can select your desired gene and predictor scores for analysis. 
+                   After configuring these settings, generate a Precision-Recall Curve (PRC) to assess variant effect predictor performance."),
              sidebarLayout(
                sidebarPanel(
                  fileInput("file_full", "Upload Full Reference Set CSV File", 
@@ -158,6 +181,7 @@ ui <- fluidPage(
                  textOutput("errorText")
                )
              )
+    )
     )
   )
 )
