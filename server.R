@@ -272,10 +272,16 @@ server <- function(input, output, session) {
         
         
     } else {
+      # logic for fetch
+      #prcdata <- reactiveVal(NULL)
+      #prcdata_own <- reactiveVal(NULL)
+      plot_data <- reactiveVal(NULL)
       
+      # Observe changes to input$input_type
+      #observeEvent(input$input_type, {
       #logic for advanced - own
         if (input$input_type == "own") {
-          prcdata <- reactive({
+          prcdata <- eventReactive(input$file_full, {
             req(input$file_full)
             df <- tryCatch({
               read.csv(input$file_full$datapath, stringsAsFactors = FALSE)
@@ -289,9 +295,7 @@ server <- function(input, output, session) {
               return(NULL)
             })
             
-            print(colnames(df)) # DEBUG
-            
-            # Mandatory columns
+            # Process df
             colnames(df)[colnames(df) == "gnomad__af"] <- "gnomAD_AF"
             colnames(df)[colnames(df) == "clinvar"] <- "clinvar"
             
@@ -320,11 +324,7 @@ server <- function(input, output, session) {
           
         } else if (input$input_type == "fetch")  {
           
-          # logic for fetch
-          prcdata <- reactiveVal(NULL)
-          plot_data <- reactiveVal(NULL)
-          
-          observeEvent(input$fetchButton, {
+          prcdata <- eventReactive(input$fetchButton, {
            # req(input$input_type)
             
               # Initialize empty list to store results
@@ -434,13 +434,16 @@ server <- function(input, output, session) {
               variant_data_df <- dplyr::left_join(df, variant_data_df, by = c("chrom", "pos", "ref_base", "alt_base"))
               
               # Update reactive variable
-              prcdata(variant_data_df)
+              #prcdata(variant_data_df)
               
               # Clear any error message
               output$errorText <- renderText("")
               print("fetch complete") # DEBUG
+              return (variant_data_df)
         })
-      }
+        }
+      
+      
       
       df <- prcdata()
       
@@ -448,11 +451,12 @@ server <- function(input, output, session) {
       state <- reactiveValues(gnomad_filter_inserted = FALSE)
       
       # Observe changes to the processed data only when prcdata changes
-      observe({
-        req(input$file_full)
+      observeEvent(prcdata(), {
+        #req(input$file_full)
         
         # Use isolate to prevent re-triggering prcdata
-        df <- isolate(prcdata())
+        df <- prcdata()
+        print(colnames(df)) # DEBUG
         if (is.null(df)) return()  # Exit if prcdata is NULL
         
         # Check for gnomAD columns, case-insensitive
@@ -466,8 +470,8 @@ server <- function(input, output, session) {
           
           # Insert the checkbox
           insertUI(
-            selector = "#upload_guide",
-            where = "afterEnd",
+            selector = "#scores",
+            where = "beforeBegin",
             ui = div(id = "gnomad_filter_wrapper",
                      checkboxInput("common_variant_filter", 
                                    "Exclude Common Variants (gnomAD AF > 0.005)", 
@@ -485,8 +489,8 @@ server <- function(input, output, session) {
       
       
       
-      observe({
-        req(input$file_full)
+      observeEvent(prcdata(), {
+        #req(input$file_full)
         df <- prcdata()  # Assuming prcdata() reads the uploaded CSV
         
         # Detect all columns with the "VEP_" prefix
