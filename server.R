@@ -19,10 +19,8 @@ server <- function(input, output, session) {
   
   # Observe the Proceed button to switch tabs
   observeEvent(input$proceed_button, {
-    if (input$intro_data_source == "upload") {
-      updateNavbarPage(session, "navbar", selected = "Custom")
-    } else if (input$intro_data_source == "fetch") {
-      updateNavbarPage(session, "navbar", selected = "Fetch Live")
+    if (input$intro_data_source == "fetch") {
+      updateNavbarPage(session, "navbar", selected = "Advanced")
     } else {
       updateNavbarPage(session, "navbar", selected = "Main App")
     }
@@ -51,10 +49,10 @@ server <- function(input, output, session) {
           }
           
           colnames(df) <- c("base__gene", "base__achange")
-          full_df <- read.csv("preprocessed_id_revstat.csv", stringsAsFactors = FALSE)
+          full_df <- read.csv("preprocessed.csv", stringsAsFactors = FALSE)
           df <- merge(df, full_df, by = c("base__gene", "base__achange"))
         } else {
-          df <- read.table("preprocessed_id_revstat.csv", sep = ',', header = TRUE, stringsAsFactors = FALSE)
+          df <- read.table("preprocessed.csv", sep = ',', header = TRUE, stringsAsFactors = FALSE)
         }
         return(df)
       })
@@ -93,8 +91,7 @@ server <- function(input, output, session) {
         
         # Create a modified dataframe for display
         gene_display_df <- df %>% filter(base__gene == gene_selected) %>%
-          select(base__gene, base__achange, classification, revstat, stars) %>%
-          mutate(classification = ifelse(classification == TRUE, "B/LB", "P/LP"))
+          select(base__gene, base__achange, clinvar, revstat, stars)
         
         
         showModal(modalDialog(
@@ -120,26 +117,32 @@ server <- function(input, output, session) {
       
       # Generate PRC and open modal for variant selection
       observeEvent(input$Main_plotButton, {
-        df <- prcdata()  # Filtered dataframe
-        selected_gene <- input$Main_gene  # Get the selected gene
-        
+        gene_s <- input$Main_gene  # Get the selected gene
+        prcfiltered <- prcdata() %>%
+          filter(base__gene == gene_s)
         if (!is.null(df)) {
-          showVariantSelectionModal(df, selected_gene)  # Show modal with filtered variants for the selected gene
+          showVariantSelectionModal(prcfiltered, gene_s)  # Show modal with filtered variants for the selected gene
         }
       })
       
       # Handle the confirmation from the modal
       observeEvent(input$confirm_selection, {
         selected_rows <- input$variant_table_rows_selected  # Get selected rows from the table
-        df <- prcdata()
+        # df <- prcdata()
+        gene_s <- input$Main_gene  # Get the selected gene
+        prcfiltered <- prcdata() %>%
+          filter(base__gene == gene_s)
         
-        if (!is.null(df) && length(selected_rows) > 0) {
+        if (!is.null(prcfiltered) && length(selected_rows) > 0) {
           # Update the selected variants based on the user's choice
-          selected_df <- df[selected_rows, ]
+          print(selected_rows) #DEBUG
+          selected_df <- prcfiltered[selected_rows, ]
           selected_variants(selected_df)
           
           # Proceed with the PRC generation using the selected variants
           gene_s <- input$Main_gene
+          print(gene_s) # DEBUG
+          
           exclude_common_variants <- input$Main_common_variant_filter
           selected_scores <- input$Main_scores
           print("begin plot with selected variants") # DEBUG
@@ -153,15 +156,16 @@ server <- function(input, output, session) {
             selected_df <- selected_df[is.na(selected_df$gnomAD_AF) | selected_df$gnomAD_AF <= 0.005, ]
           }
           
-          selected_df <- selected_df[order(selected_df$classification), ]
+          selected_df <- selected_df[order(selected_df$clinvar), ]
           
+          selected_df <- selected_df %>% mutate(clinvar = ifelse(clinvar == "B/LB", TRUE, FALSE))
           print(selected_df) # DEBUG
           
-          B_org <- sum(selected_df$classification == TRUE & rowSums(!is.na(selected_df[selected_scores])) > 0)
-          P_org <- sum(selected_df$classification == FALSE & rowSums(!is.na(selected_df[selected_scores])) > 0)
+          B_org <- sum(selected_df$clinvar == TRUE & rowSums(!is.na(selected_df[selected_scores])) > 0)
+          P_org <- sum(selected_df$clinvar == FALSE & rowSums(!is.na(selected_df[selected_scores])) > 0)
           
           tryCatch({
-            yrobj <- yr2(truth = selected_df[["classification"]], scores = selected_df[selected_scores], high = rep(FALSE, length(selected_scores)))
+            yrobj <- yr2(truth = selected_df[["clinvar"]], scores = selected_df[selected_scores], high = rep(FALSE, length(selected_scores)))
             
             plot_data(list(
               yrobj = yrobj,
@@ -265,180 +269,239 @@ server <- function(input, output, session) {
           write.csv(prcfiltered, file, row.names = FALSE)
         }
       )
-    } 
-    else if (input$navbar == "Fetch Live") {
-      # logic for fetch
-      variant_data <- reactiveVal(NULL)
-      plot_info <- reactiveVal(NULL)
+        
+        
+    } else {
       
-      observeEvent(input$fetchButton, {
-        req(input$input_type)
-        
-        # Initialize empty list to store results
-        all_results <- list()
-        
-        if (input$input_type == "chrom_pos") {
-          req(input$variant_file)
-          df <- read.csv(input$variant_file$datapath, stringsAsFactors = FALSE)
-          colnames(df) <- trimws(colnames(df))
+      #logic for advanced - own
+        if (input$input_type == "own") {
+          prcdata <- reactive({
+            req(input$file_full)
+            df <- tryCatch({
+              read.csv(input$file_full$datapath, stringsAsFactors = FALSE)
+            }, error = function(e) {
+              showModal(modalDialog(
+                title = "Error",
+                "There was an error reading the uploaded file. Please ensure it is a valid CSV file.",
+                easyClose = TRUE,
+                footer = modalButton("Close")
+              ))
+              return(NULL)
+            })
+            
+            print(colnames(df)) # DEBUG
+            
+            # Mandatory columns
+            colnames(df)[colnames(df) == "gnomad__af"] <- "gnomAD_AF"
+            colnames(df)[colnames(df) == "clinvar"] <- "clinvar"
+            
+            return(df)
+          })
           
-          # Check for necessary columns
-          if (!all(c("Chromosome", "Position", "Reference_Base", "Alternate_Base") %in% colnames(df))) {
-            output$errorText <- renderText("Error: The uploaded CSV must contain the columns 'Chromosome', 'Position', 'Reference_Base', 'Alternate_Base'.")
-            return(NULL)
-          }
-        } else if (input$input_type == "hgvsc") {
-          req(input$variant_file_hgvsc)
-          df_hgvsc <- read.csv(input$variant_file_hgvsc$datapath, stringsAsFactors = FALSE)
-          colnames(df_hgvsc) <- trimws(colnames(df_hgvsc))
+          # Guide on how to format user-inputted csv
+          observeEvent(input$upload_guide, {
+            showModal(modalDialog(
+              title = "Reference Set Format Information",
+              HTML("Please ensure your own reference set is a CSV file.<br><br>
+            Mandatory columns:<br>
+            <b>gene:</b> Gene name(s)<br>
+            <b>clinvar:</b> Variant clinvar (TRUE for Benign, FALSE for Pathogenic)<br><br>
+            
+            Optional columns: <br>
+            <b>gnomad_af:</b> GnomAD allele frequency - for filtering out common variants<br><br>
+            
+            For any predictors or custom scores that you would like to include, put 'VEP_' before the name of the column. For example:<br>
+            <b>VEP_alphamissense:</b> AlphaMissense score<br>
+            <b>VEP_custom:</b> Additional scores you would like to include<br><br>"),
+              easyClose = TRUE,
+              footer = NULL
+            ))
+          })
           
-          # Ensure the necessary columns exist and rename to standard column name
-          if (!all(c("Transcript_ID", "HGVSC") %in% colnames(df_hgvsc))) {
-            output$errorText <- renderText("Error: The uploaded CSV must contain the columns 'Transcript_ID' and 'HGVSC'.")
-            return(NULL)
-          }
+        } else if (input$input_type == "fetch")  {
           
-          # Concatenate the Transcript ID and HGVSC into a single column
-          df_hgvsc <- df_hgvsc %>%
-            mutate(OpenCRAVAT_Input = paste0(Transcript_ID, ":", HGVSC))
+          # logic for fetch
+          prcdata <- reactiveVal(NULL)
+          plot_data <- reactiveVal(NULL)
           
-          # Use the concatenated column for further processing
-          df <- df_hgvsc %>% select(OpenCRAVAT_Input)
-        }
-        
-        # Define the standard column names to ensure consistency
-        standard_colnames <- c(
-          "base__gene", 
-          "base__achange", 
-          "gnomad__af", 
-          "varity_r", 
-          "revel__score", 
-          "alphamissense__pathogenicity", 
-          "classification"
-        )
-        
-        # Show a progress bar while fetching data
-        withProgress(message = 'Fetching Variant Data', value = 0, {
-          for (i in 1:nrow(df)) {
-            if (input$input_type == "chrom_pos") {
-              # Check if 'Chromosome' already contains the 'chr' prefix
-              if (grepl("^chr", df$Chromosome[i])) {
-                chrom <- df$Chromosome[i]  # Use as is if it contains 'chr'
-              } else {
-                chrom <- paste0("chr", df$Chromosome[i])  # Add 'chr' prefix if missing
-              }
-              pos <- df$Position[i]
-              ref <- df$Reference_Base[i]
-              alt <- df$Alternate_Base[i]
+          observeEvent(input$fetchButton, {
+           # req(input$input_type)
+            
+              # Initialize empty list to store results
+            all_results <- list()
               
-              # Construct API URL for chromosome-based input
-              api_url <- paste0(
-                "https://run.opencravat.org/submit/annotate?",
-                "chrom=", chrom,
-                "&pos=", pos,
-                "&ref_base=", ref,
-                "&alt_base=", alt,
-                "&annotators=clinvar,gnomad,varity_r,revel,alphamissense"
-              )
-              
-              # Make the GET request to OpenCRAVAT
-              response <- GET(api_url)
-              
-              # Parse the JSON response
-              result <- fromJSON(content(response, "text"), flatten = TRUE)
-              
-              print(result) # DEBUG
-              
-            } else if (input$input_type == "hgvsc") {
-              hgvsc_input <- df$OpenCRAVAT_Input[i]
-              
-              print(hgvsc_input) # DEBUG
-              
-              # Define the endpoint
-              api_url <- "https://run.opencravat.org/submit/annotate"
-              
-              # Create the body of the POST request
-              body <- list(
-                hgvs = hgvsc_input
-              )
-              
-              # Send the POST request to the API
-              response <- POST(
-                url = api_url,
-                body = toJSON(body),
-                encode = "json",
-                content_type_json()
-              )
-              
-              # Parse the JSON response
-              result <- content(response, as = "parsed")
-              
-              # Print the response (or handle it as needed)
-              print(result) # DEBUG
-              
+            req(input$file_fetch)
+            df <- read.csv(input$file_fetch$datapath, stringsAsFactors = FALSE)
+            colnames(df) <- trimws(colnames(df))
+            # Ensure 'chrom' column in df has the "chr" prefix for consistency with result_df
+            df <- df %>%
+              mutate(chrom = ifelse(grepl("^chr", as.character(chrom)), as.character(chrom), paste0("chr", chrom)))
+            
+            # Check for necessary columns
+            if (!all(c("chrom", "pos", "ref_base", "alt_base") %in% colnames(df))) {
+              output$errorText <- renderText("Error: The uploaded CSV must contain the columns 'chrom', 'pos', 'ref_base', 'alt_base'.")
+              return(NULL)
             }
-            
-            # Handle cases where certain annotations might be missing
-            clinvar_sig <- ifelse(!is.null(result$clinvar$sig), result$clinvar$sig, NA)
-            
-            # Determine the classification value (T/F) based on ClinVar significance
-            classification <- NA
-            if (!is.na(clinvar_sig)) {
-              clinvar_sig_lower <- tolower(clinvar_sig)
               
-              if (grepl("benign", clinvar_sig_lower)) {
-                classification <- TRUE
-              } else if (grepl("pathogenic", clinvar_sig_lower) && !grepl("conflicting", clinvar_sig_lower)) {
-                classification <- FALSE
+            # Show a progress bar while fetching data
+            withProgress(message = 'Fetching Variant Data', value = 0, {
+              for (i in 1:nrow(df)) {
+                
+                print(colnames(df)) # DEBUG
+                print(df) # DEBUG
+                print(nrow(df))
+                
+                chrom <- df$chrom[i]
+                pos <- df$pos[i]
+                ref <- df$ref_base[i]
+                alt <- df$alt_base[i]
+                
+                # Construct API URL for chrom-based input
+                api_url <- paste0(
+                  "https://run.opencravat.org/submit/annotate?",
+                  "chrom=", chrom,
+                  "&pos=", pos,
+                  "&ref_base=", ref,
+                  "&alt_base=", alt,
+                  "&annotators=clinvar,gnomad,varity_r,revel,alphamissense"
+                )
+                
+                # Make the GET request to OpenCRAVAT
+                response <- GET(api_url)
+                
+                # Parse the JSON response
+                result <- fromJSON(content(response, "text"), flatten = TRUE)
+                
+                #print(result) # DEBUG
+                
+              
+              
+                # Handle cases where certain annotations might be missing
+                clinvar_sig <- ifelse(!is.null(result$clinvar$sig), result$clinvar$sig, NA)
+                
+                # Determine the clinvar value (T/F) based on ClinVar significance
+                clinvar <- NA
+                if (!is.na(clinvar_sig)) {
+                  clinvar_sig_lower <- tolower(clinvar_sig)
+                  
+                  if (grepl("benign", clinvar_sig_lower)) {
+                    clinvar <- "B/LB"
+                  } else if (grepl("pathogenic", clinvar_sig_lower) && !grepl("conflicting", clinvar_sig_lower)) {
+                    clinvar <- "P/LP"
+                  }
+                }
+                
+                # Extract into corresponding columns - TODO: be able to add additional predictors
+                gene <- ifelse(!is.null(result$crx$hugo), result$crx$hugo, NA)
+                achange <- ifelse(!is.null(result$crx$achange), result$crx$achange, NA)
+                gnomad_af <- ifelse(!is.null(result$gnomad$af), result$gnomad$af, NA)
+                varity_r <- ifelse(!is.null(result$varity_r$varity_r), result$varity_r$varity_r, NA)
+                revel_score <- ifelse(!is.null(result$revel$score), result$revel$score, NA)
+                alphamissense_path <- ifelse(!is.null(result$alphamissense$am_pathogenicity), result$alphamissense$am_pathogenicity, NA)
+                
+                # Create a data frame with consistent column names
+                result_df <- data.frame(
+                  chrom = chrom,
+                  pos = pos,
+                  ref_base = ref,
+                  alt_base = alt,
+                  base__gene = gene,
+                  base__achange = achange,
+                  gnomad__af = gnomad_af,
+                  varity_r = varity_r,
+                  revel__score = revel_score,
+                  alphamissense__pathogenicity = alphamissense_path,
+                  clinvar = clinvar,
+                  stringsAsFactors = FALSE
+                )
+                
+                # Append to the results list
+                all_results[[i]] <- result_df
+                
+                incProgress(1 / nrow(df))
+                showNotification(paste(i, "/", nrow(df), "variants fetched"), duration = 3, type = "message")
+                print("here") # DEBUG
+                }
+                print("done1")
               }
-            }
-            
-            # Extract into corresponding columns - TODO: be able to add additional predictors
-            gene <- ifelse(!is.null(result$crx$hugo), result$crx$hugo, NA)
-            achange <- ifelse(!is.null(result$crx$achange), result$crx$achange, NA)
-            gnomad_af <- ifelse(!is.null(result$gnomad$af), result$gnomad$af, NA)
-            varity_r <- ifelse(!is.null(result$varity_r$varity_r), result$varity_r$varity_r, NA)
-            revel_score <- ifelse(!is.null(result$revel$score), result$revel$score, NA)
-            alphamissense_path <- ifelse(!is.null(result$alphamissense$am_pathogenicity), result$alphamissense$am_pathogenicity, NA)
-            
-            # Create a data frame with consistent column names
-            result_df <- data.frame(
-              base__gene = gene,
-              base__achange = achange,
-              gnomad__af = gnomad_af,
-              varity_r = varity_r,
-              revel__score = revel_score,
-              alphamissense__pathogenicity = alphamissense_path,
-              classification = classification,
-              stringsAsFactors = FALSE
-            )
-            
-            # Ensure that all columns match the standard names, even if some are missing
-            missing_cols <- setdiff(standard_colnames, colnames(result_df))
-            result_df[missing_cols] <- NA  # Add missing columns with NA values
-            
-            # Append to the results list
-            all_results[[i]] <- result_df
-            
-            incProgress(1 / nrow(df))
-            showNotification(paste(i, "/", nrow(df), "variants fetched"), duration = 3, type = "message")
-          }
+              )
+              print("done2")
+              
+              # Combine all results into a data frame
+              variant_data_df <- do.call(rbind, all_results)
+              
+              # Join variant_data_df with the original df on chrom, pos, ref_base, alt_base
+              variant_data_df <- dplyr::left_join(df, variant_data_df, by = c("chrom", "pos", "ref_base", "alt_base"))
+              
+              # Update reactive variable
+              prcdata(variant_data_df)
+              
+              # Clear any error message
+              output$errorText <- renderText("")
+              print("fetch complete") # DEBUG
         })
-        print("done1")
+      }
+      
+      df <- prcdata()
+      
+      # Initialize reactiveValues to store the state of the gnomad checkbox insertion
+      state <- reactiveValues(gnomad_filter_inserted = FALSE)
+      
+      # Observe changes to the processed data only when prcdata changes
+      observe({
+        req(input$file_full)
         
-        # Combine all results into a data frame
-        variant_data_df <- do.call(rbind, all_results)
+        # Use isolate to prevent re-triggering prcdata
+        df <- isolate(prcdata())
+        if (is.null(df)) return()  # Exit if prcdata is NULL
         
-        # Update reactive variable
-        variant_data(variant_data_df)
-        print("done2")
-        # Clear any error message
-        output$Fetch_errorText <- renderText("")
+        # Check for gnomAD columns, case-insensitive
+        colnames_lower <- tolower(colnames(df))
+        gnomad_columns <- grep("gnomad", colnames_lower, value = TRUE)
+        
+        # If gnomAD columns are found and the checkbox is not yet added
+        if (length(gnomad_columns) > 0 && !state$gnomad_filter_inserted) {
+          # Remove any existing checkbox to prevent duplicates
+          removeUI(selector = "#gnomad_filter_wrapper", immediate = TRUE)
+          
+          # Insert the checkbox
+          insertUI(
+            selector = "#upload_guide",
+            where = "afterEnd",
+            ui = div(id = "gnomad_filter_wrapper",
+                     checkboxInput("common_variant_filter", 
+                                   "Exclude Common Variants (gnomAD AF > 0.005)", 
+                                   value = TRUE)
+            )
+          )
+          state$gnomad_filter_inserted <- TRUE
+          
+        } else if (length(gnomad_columns) == 0 && state$gnomad_filter_inserted) {
+          # Remove the checkbox if no gnomAD columns are found and it’s currently inserted
+          removeUI(selector = "#gnomad_filter_wrapper", immediate = TRUE)
+          state$gnomad_filter_inserted <- FALSE
+        }
       })
       
-      observeEvent(input$Fetch_plotButton, {
-        df <- variant_data()
-        df <- df[!is.na(df$classification), ]
+      
+      
+      observe({
+        req(input$file_full)
+        df <- prcdata()  # Assuming prcdata() reads the uploaded CSV
+        
+        # Detect all columns with the "VEP_" prefix
+        predictor_columns <- colnames(df)[grepl("^VEP_", colnames(df))]
+        
+        # Remove "VEP_" prefix from predictor column names
+        predictor_columns <- gsub("^VEP_", "", predictor_columns)
+        
+        # Update checkboxGroupInput with detected predictor columns
+        updateCheckboxGroupInput(session, "scores", choices = predictor_columns, selected = predictor_columns)
+      })
+      
+      observeEvent(input$plotButton, {
+        df <- prcdata()
+        df <- df[!is.na(df$clinvar), ]
         print(df) # DEBUG
         
         if (is.null(df) || nrow(df) == 0) {
@@ -447,8 +510,8 @@ server <- function(input, output, session) {
         }
         
         gene_s <- df$base__gene[1]
-        exclude_common_variants <- input$Fetch_common_variant_filter
-        selected_scores <- input$Fetch_scores
+        exclude_common_variants <- input$common_variant_filter
+        selected_scores <- input$scores
         
         # Rename columns to match what you need for PRC plotting
         names(df)[names(df) == "varity_r"] <- "VARITY"
@@ -460,212 +523,29 @@ server <- function(input, output, session) {
           df <- df[is.na(df$gnomAD_AF) | df$gnomAD_AF <= 0.005, ]
         }
         
-        df <- df[order(df$classification), ]
+        # Remove "P-" prefix from predictor column names
+        colnames(df) <- gsub("^VEP_", "", colnames(df))
+        
+        df <- df[order(df$clinvar), ]
+        
+        print(df) # DEBUG
         
         # Filter for the selected scores
         prcfiltered <- df %>%
-          filter(rowSums(!is.na(df[selected_scores])) > 0)
+          filter(rowSums(!is.na(df[selected_scores])) > 0) %>%
+          mutate(clinvar = ifelse(clinvar == "B/LB", TRUE, FALSE))
         
-        B_org <- sum(prcfiltered$classification == TRUE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
-        P_org <- sum(prcfiltered$classification == FALSE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
+        B_org <- sum(prcfiltered$clinvar == TRUE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
+        P_org <- sum(prcfiltered$clinvar == FALSE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
         
         tryCatch({
-          yrobj <- yr2(truth = prcfiltered[["classification"]], scores = prcfiltered[selected_scores], high = rep(FALSE, length(selected_scores)))
+          yrobj <- yr2(truth = prcfiltered[["clinvar"]], scores = prcfiltered[selected_scores], high = rep(FALSE, length(selected_scores)))
           
-          # Store plot information in plot_info instead of overwriting variant_data
-          plot_info(list(
+          # Store plot information in plot_info
+          plot_data(list(
             yrobj = yrobj,
             lty_styles = c("dashed", "solid", "dashed")[1:length(selected_scores)],
             col_styles = c("purple", "cadetblue2", "orange")[1:length(selected_scores)],
-            gene_s = gene_s,
-            selected_scores = selected_scores,
-            B_org = B_org,
-            P_org = P_org,
-            prcfiltered = prcfiltered  # Save the filtered data for metadata
-          ))
-          
-          output$Fetch_errorText <- renderText("")
-          
-        }, error = function(e) {
-          plot_info(NULL)
-          output$Fetch_errorText <- renderText("Not enough data to generate PRC plot.")
-        })
-        
-        output$Fetch_prcPlot <- renderPlot({
-          plot_details <- plot_info()
-          if (!is.null(plot_details)) {
-            tryCatch({
-              draw.prc(plot_details$yrobj, lty = plot_details$lty_styles, col = plot_details$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_details$gene_s, " PRCs for ", paste(plot_details$selected_scores, collapse = ", ")))
-              abline(h = 90, lty = "dashed")
-              legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_details$P_org), paste("# of Benign and Likely Benign:", plot_details$B_org)), pch = 15, bty = "n")
-            }, error = function(e) {
-              showModal(modalDialog(
-                title = 'Error',
-                'Not enough data',
-                easyClose = TRUE,
-                footer = NULL
-              ))
-            })
-          }
-        }, width = 600, height = 600, res = 72)
-      })
-      
-      output$Fetch_downloadPlotPNG <- downloadHandler(
-        filename = function() {
-          paste("PRC_plot_", Sys.Date(), ".png", sep = "")
-        },
-        content = function(file) {
-          plot_details <- plot_info()
-          if (!is.null(plot_details)) {
-            png(file, width = 6, height = 6, units = "in", res = 72)
-            draw.prc(plot_details$yrobj, lty = plot_details$lty_styles, col = plot_details$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_details$gene_s, " PRCs for ", paste(plot_details$selected_scores, collapse = ", ")))
-            abline(h = 90, lty = "dashed")
-            legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_details$P_org), paste("# of Benign and Likely Benign:", plot_details$B_org)), pch = 15, bty = "n")
-            dev.off()
-          }
-        }
-      )
-      
-      output$Fetch_downloadPlotPDF <- downloadHandler(
-        filename = function() {
-          paste("PRC_Report_", Sys.Date(), ".pdf", sep = "")
-        },
-        content = function(file) {
-          plot_details <- plot_info()
-          if (!is.null(plot_details)) {
-            # Generate the PDF report
-            rmarkdown::render(input = "report_template.Rmd",
-                              output_file = file,
-                              params = list(
-                                gene_s = plot_details$gene_s,
-                                selected_scores = plot_details$selected_scores,
-                                B_org = plot_details$B_org,
-                                P_org = plot_details$P_org,
-                                prcfiltered = plot_details$prcfiltered
-                              ),
-                              envir = new.env(parent = globalenv()))
-          }
-        }
-      )
-    }
-    
-    else {
-      # prcdata logic for Upload
-      # Observer to detect and list available predictors dynamically
-      prcdata <- reactive({
-        req(input$file_full)
-        df <- tryCatch({
-          read.csv(input$file_full$datapath, stringsAsFactors = FALSE)
-        }, error = function(e) {
-          showModal(modalDialog(
-            title = "Error",
-            "There was an error reading the uploaded file. Please ensure it is a valid CSV file.",
-            easyClose = TRUE,
-            footer = modalButton("Close")
-          ))
-          return(NULL)
-        })
-        
-        print(colnames(df)) # DEBUG
-        
-        # Mandatory columns
-        colnames(df)[colnames(df) == "gnomad__af"] <- "gnomAD_AF"
-        colnames(df)[colnames(df) == "classification"] <- "classification"
-        
-        return(df)
-      })
-      
-      observe({
-        req(input$file_full)
-        df <- prcdata()  # Assuming prcdata() reads the uploaded CSV
-        
-        # Extract unique gene names
-        gene_names <- unique(df$base__gene)
-        
-        # Update selectizeInput for gene names
-        updateSelectizeInput(session, "gene", choices = gene_names, server = TRUE)
-      })
-      
-      # Observe the presence of any column related to gnomAD (e.g., gnomad_af, gnomad__af) and update UI accordingly
-      observe({
-        req(input$file_full)
-        df <- prcdata()  # Assuming prcdata() reads the uploaded CSV
-        
-        # Match any variation of gnomad, upper or lower case
-        colnames_lower <- tolower(colnames(df))
-        gnomad_columns <- grep("gnomad", colnames_lower, value = TRUE)
-        
-        # If no gnomAD-related columns are found, remove the checkbox
-        if (length(gnomad_columns) == 0) {
-          removeUI(selector = "#common_variant_filter")
-        } else {
-          # If gnomAD columns exist, insert the checkbox back (if not already present)
-          if (is.null(input$common_variant_filter)) {
-            insertUI(
-              selector = "#upload_guide",  # Insert after the upload guide button
-              where = "afterEnd",
-              ui = checkboxInput("common_variant_filter", 
-                                 "Exclude Common Variants (gnomAD AF > 0.005)", 
-                                 value = TRUE)
-            )
-          }
-        }
-      })
-      
-      observe({
-        req(input$file_full)
-        df <- prcdata()  # Assuming prcdata() reads the uploaded CSV
-        
-        # Detect all columns with the "P-" prefix
-        predictor_columns <- colnames(df)[grepl("^P_", colnames(df))]
-        
-        # Remove "P-" prefix from predictor column names
-        predictor_columns <- gsub("^P_", "", predictor_columns)
-        
-        # Update checkboxGroupInput with detected predictor columns
-        updateCheckboxGroupInput(session, "scores", choices = predictor_columns, selected = predictor_columns)
-      })
-      
-      # Plotting logic for Upload with dynamic predictors
-      observeEvent(input$plotButton, {
-        df <- prcdata()
-        gene_s <- input$gene
-        exclude_common_variants <- input$common_variant_filter
-        selected_scores <- input$scores
-        
-        # Check if the common_variant_filter checkbox exists
-        if (!is.null(input$common_variant_filter)) {
-          exclude_common_variants <- input$common_variant_filter
-          
-          # If the checkbox exists and is TRUE, apply the filter for common variants
-          if (exclude_common_variants) {
-            gnomad_column <- grep("gnomad", tolower(colnames(df)), value = TRUE)
-            
-            # If the gnomad column is found, apply the filter
-            if (length(gnomad_column) > 0) {
-              df <- df[is.na(df[[gnomad_column]]) | df[[gnomad_column]] <= 0.005, ]
-            }
-          }
-        }
-        
-        # Remove "P-" prefix from predictor column names
-        colnames(df) <- gsub("^P_", "", colnames(df))
-        
-        df <- df[order(df$classification), ]
-        
-        prcfiltered <- df %>%
-          filter(base__gene == gene_s)  # Standardize to input$gene
-        
-        B_org <- sum(prcfiltered$classification == TRUE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
-        P_org <- sum(prcfiltered$classification == FALSE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
-        
-        tryCatch({
-          yrobj <- yr2(truth = prcfiltered[["classification"]], scores = prcfiltered[selected_scores], high = rep(FALSE, length(selected_scores)))
-          
-          plot_data(list(
-            yrobj = yrobj,
-            lty_styles = rep("solid", length(selected_scores)),
-            col_styles = rainbow(length(selected_scores)),
             gene_s = gene_s,
             selected_scores = selected_scores,
             B_org = B_org,
@@ -677,12 +557,11 @@ server <- function(input, output, session) {
           
         }, error = function(e) {
           plot_data(NULL)
-          output$errorText <- renderText("Not enough data")
+          output$errorText <- renderText("Not enough data to generate PRC plot.")
         })
         
         output$prcPlot <- renderPlot({
           plot_info <- plot_data()
-          
           if (!is.null(plot_info)) {
             tryCatch({
               draw.prc(plot_info$yrobj, lty = plot_info$lty_styles, col = plot_info$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", ")))
@@ -700,10 +579,9 @@ server <- function(input, output, session) {
         }, width = 600, height = 600, res = 72)
       })
       
-      # Download logic for Upload (PNG)
       output$downloadPlotPNG <- downloadHandler(
         filename = function() {
-          paste("PRC_plot_", input$gene, ".png", sep = "")  # Changed from input$Main_gene to input$gene
+          paste("PRC_plot_", Sys.Date(), ".png", sep = "")
         },
         content = function(file) {
           plot_info <- plot_data()
@@ -717,16 +595,15 @@ server <- function(input, output, session) {
         }
       )
       
-      # Download logic for Upload
       output$downloadPlotPDF <- downloadHandler(
         filename = function() {
-          paste("PRC_Report_", input$gene, ".pdf", sep = "")
+          paste("PRC_Report_", Sys.Date(), ".pdf", sep = "")
         },
         content = function(file) {
           plot_info <- plot_data()
           if (!is.null(plot_info)) {
             # Generate the PDF report
-            rmarkdown::render(input = "report_template_custom.Rmd",
+            rmarkdown::render(input = "report_template.Rmd",
                               output_file = file,
                               params = list(
                                 gene_s = plot_info$gene_s,
@@ -736,29 +613,10 @@ server <- function(input, output, session) {
                                 prcfiltered = plot_info$prcfiltered
                               ),
                               envir = new.env(parent = globalenv()))
-          }
         }
-      )
-      
-      # Guide on how to format user-inputted csv
-      observeEvent(input$upload_guide, {
-        showModal(modalDialog(
-          title = "Reference Set Format Information",
-          HTML("Please ensure your own reference set is a CSV file.<br><br>
-            Mandatory columns:<br>
-            <b>gene:</b> Gene name(s)<br>
-            <b>classification:</b> Variant classification (TRUE for Benign, FALSE for Pathogenic)<br><br>
-            
-            Optional columns: <br>
-            <b>gnomad_af:</b> GnomAD allele frequency - for filtering out common variants<br><br>
-            
-            For any predictors or custom scores that you would like to include, include 'P_' before the name of the column. For example:<br>
-            <b>P_alphamissense:</b> AlphaMissense score<br>
-            <b>P_custom:</b> Additional scores you would like to include<br><br>"),
-          easyClose = TRUE,
-          footer = NULL
-        ))
-      })
+      }
+    )
     }
   })
 }
+  
