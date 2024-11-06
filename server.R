@@ -347,10 +347,6 @@ server <- function(input, output, session) {
             withProgress(message = 'Fetching Variant Data', value = 0, {
               for (i in 1:nrow(df)) {
                 
-                print(colnames(df)) # DEBUG
-                print(df) # DEBUG
-                print(nrow(df))
-                
                 chrom <- df$chrom[i]
                 pos <- df$pos[i]
                 ref <- df$ref_base[i]
@@ -363,7 +359,8 @@ server <- function(input, output, session) {
                   "&pos=", pos,
                   "&ref_base=", ref,
                   "&alt_base=", alt,
-                  "&annotators=clinvar,gnomad,varity_r,revel,alphamissense"
+                  "&annotators=", paste(sub("varity_er", "varity_r", tolower(input$Fetch_scores)), collapse = ",") 
+                  # For special case for VARITY_ER since it is under VARITY_R
                 )
                 
                 # Make the GET request to OpenCRAVAT
@@ -372,60 +369,107 @@ server <- function(input, output, session) {
                 # Parse the JSON response
                 result <- fromJSON(content(response, "text"), flatten = TRUE)
                 
-                #print(result) # DEBUG
-                
-              
-              
-                # Handle cases where certain annotations might be missing
-                clinvar_sig <- ifelse(!is.null(result$clinvar$sig), result$clinvar$sig, NA)
-                
-                # Determine the clinvar value (T/F) based on ClinVar significance
-                clinvar <- NA
-                if (!is.na(clinvar_sig)) {
-                  clinvar_sig_lower <- tolower(clinvar_sig)
-                  
-                  if (grepl("benign", clinvar_sig_lower)) {
-                    clinvar <- "B/LB"
-                  } else if (grepl("pathogenic", clinvar_sig_lower) && !grepl("conflicting", clinvar_sig_lower)) {
-                    clinvar <- "P/LP"
-                  }
-                }
-                
-                # Extract into corresponding columns - TODO: be able to add additional predictors
+                # Extract into corresponding columns - always present in result_list
                 gene <- ifelse(!is.null(result$crx$hugo), result$crx$hugo, NA)
                 achange <- ifelse(!is.null(result$crx$achange), result$crx$achange, NA)
-                gnomad_af <- ifelse(!is.null(result$gnomad$af), result$gnomad$af, NA)
-                varity_r <- ifelse(!is.null(result$varity_r$varity_r), result$varity_r$varity_r, NA)
-                revel_score <- ifelse(!is.null(result$revel$score), result$revel$score, NA)
-                alphamissense_path <- ifelse(!is.null(result$alphamissense$am_pathogenicity), result$alphamissense$am_pathogenicity, NA)
                 
-                # Create a data frame with consistent column names
-                result_df <- data.frame(
+                # Initialize result_list for required fields
+                result_list <- list(
                   chrom = chrom,
                   pos = pos,
                   ref_base = ref,
-                  alt_base = alt,
-                  base__gene = gene,
-                  base__achange = achange,
-                  gnomad__af = gnomad_af,
-                  varity_r = varity_r,
-                  revel__score = revel_score,
-                  alphamissense__pathogenicity = alphamissense_path,
-                  clinvar = clinvar,
-                  stringsAsFactors = FALSE
+                  alt_base = alt
                 )
+                
+                # Add gene and achange columns only if they don't already exist in df
+                if (!"base__gene" %in% colnames(df)) {
+                  result_list[["base__gene"]] <- gene
+                }
+                if (!"base__achange" %in% colnames(df)) {
+                  result_list[["base__achange"]] <- achange
+                }
+                
+                # Mapping from possible scores to their corresponding data
+                score_mappings <- list(
+                  "gnomad" = list(
+                    column_name = "gnomAD_AF",
+                    value = if (!is.null(result$gnomad$af)) result$gnomad$af else NA
+                  ),
+                  "varity_r" = list(
+                    column_name = "VEP_VARITY_R",
+                    value = if (!is.null(result$varity_r$varity_r)) result$varity_r$varity_r else NA
+                  ),
+                  "varity_er" = list(
+                    column_name = "VEP_VARITY_ER",
+                    value = if (!is.null(result$varity_r$varity_er)) result$varity_r$varity_er else NA
+                  ),
+                  "revel" = list(
+                    column_name = "VEP_REVEL",
+                    value = if (!is.null(result$revel$score)) result$revel$score else NA
+                  ),
+                  "alphamissense" = list(
+                    column_name = "VEP_AlphaMissense",
+                    value = if (!is.null(result$alphamissense$am_pathogenicity)) result$alphamissense$am_pathogenicity else NA
+                  ),
+                  "mavedb" = list(
+                    column_name = "VEP_MaveDB",
+                    value = if (!is.null(result$mavedb$score)) result$mavedb$score else NA
+                  ),
+                  "provean" = list(
+                    column_name = "VEP_Provean",
+                    value = if (!is.null(result$provean$rankscore)) result$provean$rankscore else NA
+                  ),
+                  "sift" = list(
+                    column_name = "VEP_SIFT",
+                    value = if (!is.null(result$sift$rankscore)) result$sift$rankscore else NA
+                  ),
+                  "polyphen2" = list(
+                    column_name = "VEP_PolyPhen2",
+                    value = if (!is.null(result$polyphen2$hvar_rank)) result$polyphen2$hvar_rank else NA
+                  ),
+                  "clinvar" = list(
+                    column_name = "clinvar",
+                    value = if (!is.null(result$clinvar$sig)) {
+                      clinvar_sig <- tolower(result$clinvar$sig)
+                      if (grepl("benign", clinvar_sig)) {
+                        "B/LB"
+                      } else if (grepl("pathogenic", clinvar_sig) && !grepl("conflicting", clinvar_sig)) {
+                        "P/LP"
+                      } else {
+                        NA
+                      }
+                    } else {
+                      NA
+                    }
+                  )
+                )
+                
+                # Loop over the selected scores, adding columns to result_list or updating existing columns
+                for (score in input$Fetch_scores) {
+                  if (score %in% names(score_mappings)) {
+                    mapping <- score_mappings[[score]]
+                    # Check if column already exists in df
+                    if (mapping$column_name %in% colnames(df)) {
+                      # Update the existing column in df directly
+                      df[[mapping$column_name]][i] <- mapping$value
+                    } else {
+                      # Add new column to result_list
+                      result_list[[mapping$column_name]] <- mapping$value
+                    }
+                  }
+                }
+                
+                # Convert the list to a data frame for new columns to be added
+                result_df <- as.data.frame(result_list, stringsAsFactors = FALSE)
                 
                 # Append to the results list
                 all_results[[i]] <- result_df
                 
                 incProgress(1 / nrow(df))
                 showNotification(paste(i, "/", nrow(df), "variants fetched"), duration = 3, type = "message")
-                print("here") # DEBUG
                 }
-                print("done1")
               }
               )
-              print("done2")
               
               # Combine all results into a data frame
               variant_data_df <- do.call(rbind, all_results)
@@ -439,6 +483,7 @@ server <- function(input, output, session) {
               # Clear any error message
               output$errorText <- renderText("")
               print("fetch complete") # DEBUG
+              print(variant_data_df) # DEBUG
               return (variant_data_df)
         })
         }
@@ -517,12 +562,6 @@ server <- function(input, output, session) {
         exclude_common_variants <- input$common_variant_filter
         selected_scores <- input$scores
         
-        # Rename columns to match what you need for PRC plotting
-        names(df)[names(df) == "varity_r"] <- "VARITY"
-        names(df)[names(df) == "alphamissense__pathogenicity"] <- "AlphaMissense"
-        names(df)[names(df) == "revel__score"] <- "REVEL"
-        names(df)[names(df) == "gnomad__af"] <- "gnomAD_AF"
-        
         if (exclude_common_variants) {
           df <- df[is.na(df$gnomAD_AF) | df$gnomAD_AF <= 0.005, ]
         }
@@ -545,17 +584,23 @@ server <- function(input, output, session) {
         tryCatch({
           yrobj <- yr2(truth = prcfiltered[["clinvar"]], scores = prcfiltered[selected_scores], high = rep(FALSE, length(selected_scores)))
           
-          # Store plot information in plot_info
+          # Generate random colors for additional predictors if more than three
+          num_scores <- min(length(selected_scores), 3)  # Only take a maximum of three predictors for specific styles
+          extra_colors <- if (length(selected_scores) > 3) sample(grDevices::colors(), length(selected_scores) - 3) else NULL
+          
+          # Assign styles for the first three predictors, followed by additional random colors if needed
           plot_data(list(
             yrobj = yrobj,
-            lty_styles = c("dashed", "solid", "dashed")[1:length(selected_scores)],
-            col_styles = c("purple", "cadetblue2", "orange")[1:length(selected_scores)],
+            lty_styles = c("dashed", "solid", "dashed")[1:num_scores],
+            col_styles = c("purple", "cadetblue2", "orange")[1:num_scores],
             gene_s = gene_s,
             selected_scores = selected_scores,
             B_org = B_org,
             P_org = P_org,
-            prcfiltered = prcfiltered  # Save the filtered data for metadata
+            prcfiltered = prcfiltered,  # Save the filtered data for metadata
+            extra_colors = extra_colors  # Store extra colors for additional predictors if any
           ))
+          
           
           output$errorText <- renderText("")
           
@@ -568,7 +613,16 @@ server <- function(input, output, session) {
           plot_info <- plot_data()
           if (!is.null(plot_info)) {
             tryCatch({
-              draw.prc(plot_info$yrobj, lty = plot_info$lty_styles, col = plot_info$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", ")))
+              # Combine predefined colors with extra colors if necessary
+              colors_to_use <- c(plot_info$col_styles, plot_info$extra_colors)
+              draw.prc(
+                plot_info$yrobj,
+                lty = c(plot_info$lty_styles, rep("solid", length(plot_info$extra_colors))),  # Default to solid for extra predictors
+                col = colors_to_use,
+                lwd = 2,
+                balanced = TRUE,
+                main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", "))
+              )
               abline(h = 90, lty = "dashed")
               legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org), paste("# of Benign and Likely Benign:", plot_info$B_org)), pch = 15, bty = "n")
             }, error = function(e) {
@@ -581,6 +635,7 @@ server <- function(input, output, session) {
             })
           }
         }, width = 600, height = 600, res = 72)
+        
       })
       
       output$downloadPlotPNG <- downloadHandler(
@@ -590,14 +645,39 @@ server <- function(input, output, session) {
         content = function(file) {
           plot_info <- plot_data()
           if (!is.null(plot_info)) {
+            # Generate random colors for each score if more than three scores are selected
+            num_scores <- length(plot_info$selected_scores)
+            col_styles <- if (num_scores <= 3) {
+              c("purple", "cadetblue2", "orange")[1:num_scores]
+            } else {
+              colors <- grDevices::colors()
+              sample(colors, num_scores)
+            }
+            
             png(file, width = 6, height = 6, units = "in", res = 72)
-            draw.prc(plot_info$yrobj, lty = plot_info$lty_styles, col = plot_info$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", ")))
+            draw.prc(
+              plot_info$yrobj,
+              lty = rep(c("dashed", "solid", "dotted"), length.out = num_scores),
+              col = col_styles,
+              lwd = 2,
+              balanced = TRUE,
+              main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", "))
+            )
             abline(h = 90, lty = "dashed")
-            legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org), paste("# of Benign and Likely Benign:", plot_info$B_org)), pch = 15, bty = "n")
+            legend(
+              "left",
+              legend = c(
+                paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org),
+                paste("# of Benign and Likely Benign:", plot_info$B_org)
+              ),
+              pch = 15,
+              bty = "n"
+            )
             dev.off()
           }
         }
       )
+      
       
       output$downloadPlotPDF <- downloadHandler(
         filename = function() {
@@ -607,7 +687,7 @@ server <- function(input, output, session) {
           plot_info <- plot_data()
           if (!is.null(plot_info)) {
             # Generate the PDF report
-            rmarkdown::render(input = "report_template.Rmd",
+            rmarkdown::render(input = "report_template_custom.Rmd",
                               output_file = file,
                               params = list(
                                 gene_s = plot_info$gene_s,

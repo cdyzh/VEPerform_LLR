@@ -128,8 +128,19 @@ ui <- fluidPage(
                      helpText("Click 'Fetch VEP Data' after uploading your file to fetch data from OpenCRAVAT" ),
                      
                      checkboxGroupInput("Fetch_scores", "Select what to fetch from OpenCRAVAT:",
-                                        choices = list("ClinVar", "GnomAD", "VARITY", "REVEL", "AlphaMissense"),
-                                        selected = c("ClinVar", "GnomAD")),
+                                        choices = c(
+                                          "ClinVar" = "clinvar", 
+                                          "GnomAD" = "gnomad", 
+                                          "VARITY_R" = "varity_r", 
+                                          "REVEL" = "revel", 
+                                          "AlphaMissense" = "alphamissense", 
+                                          "VARITY_ER" = "varity_er", 
+                                          "MaveDB" = "mavedb", 
+                                          "PROVEAN" = "provean",
+                                          "SIFT" = "sift",
+                                          "PolyPhen-2" = "polyphen2"
+                                        ),
+                                        selected = c("clinvar", "gnomad")),
                      # Option to run OpenCRAVAT and fetch the scores
                      actionButton("fetchButton", "Fetch VEP Data")
                    ),
