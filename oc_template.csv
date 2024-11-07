@@ -1,0 +1,3 @@
+﻿chrom,pos,ref_base,alt_base,clinvar (optional),gnomad_af (optional),"VEP_name (optional, add as many as needed)"
+chr19,11089606,G,A,B/LB,0.00073064,0.01
+chr19,11100236,C,G,P/LP,1.60E-05,0.99

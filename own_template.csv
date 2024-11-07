@@ -1,0 +1,3 @@
+﻿base__gene,base__achange (optional),clinvar,gnomad_af (optional),"VEP_name (optional, add as many as needed)"
+LDLR,p.Gly20Arg,B/LB,0.00073064,0.01
+LDLR,p.Cys27Trp,P/LP,1.60E-05,0.99

@@ -17,20 +17,10 @@ server <- function(input, output, session) {
   plot_data <- reactiveVal(NULL)
   selected_variants <- reactiveVal(NULL)  # Store user-selected variants
   
-  # Observe the Proceed button to switch tabs
-  observeEvent(input$proceed_button, {
-    if (input$intro_data_source == "fetch") {
-      updateNavbarPage(session, "navbar", selected = "Advanced")
-    } else {
-      updateNavbarPage(session, "navbar", selected = "Main App")
-    }
-  })
-  
   # Giant if/else block to handle separate logic for Main App and Upload tabs
   observe({
-    if (input$navbar == "Main App") {
-      # prcdata logic for Main App
-      # prcdata logic for Main App
+    if (input$navbar == "VEPerform") {
+      # logic for Main App
       prcdata <- reactive({
         if (input$data_source == "upload" && !is.null(input$file_gene_variant)) {
           req(input$file_gene_variant)
@@ -175,6 +165,7 @@ server <- function(input, output, session) {
               selected_scores = selected_scores,
               B_org = B_org,
               P_org = P_org,
+              common_variant_filter = exclude_common_variants,
               prcfiltered = selected_df  # Save the filtered data for metadata
             ))
             print("plot success with selected variants")  # DEBUG
@@ -244,6 +235,7 @@ server <- function(input, output, session) {
                               params = list(
                                 gene_s = plot_info$gene_s,
                                 selected_scores = plot_info$selected_scores,
+                                common_variant_filter = plot_info$common_variant_filter,
                                 B_org = plot_info$B_org,
                                 P_org = plot_info$P_org,
                                 prcfiltered = plot_info$prcfiltered
@@ -308,8 +300,8 @@ server <- function(input, output, session) {
               title = "Reference Set Format Information",
               HTML("Please ensure your own reference set is a CSV file.<br><br>
             Mandatory columns:<br>
-            <b>gene:</b> Gene name(s)<br>
-            <b>clinvar:</b> Variant clinvar (TRUE for Benign, FALSE for Pathogenic)<br><br>
+            <b>base__gene:</b> Gene name(s)<br>
+            <b>clinvar:</b> Variant interpretation (B/LB or P/LP)<br><br>
             
             Optional columns: <br>
             <b>gnomad_af:</b> GnomAD allele frequency - for filtering out common variants<br><br>
@@ -317,10 +309,23 @@ server <- function(input, output, session) {
             For any predictors or custom scores that you would like to include, put 'VEP_' before the name of the column. For example:<br>
             <b>VEP_alphamissense:</b> AlphaMissense score<br>
             <b>VEP_custom:</b> Additional scores you would like to include<br><br>"),
-              easyClose = TRUE,
-              footer = NULL
+              easyClose = FALSE,
+              footer = tagList(
+                downloadButton("download_template_own", "Download CSV Template"),
+                modalButton("Close")
+              )
             ))
           })
+          
+          # Download template for own reference set
+          output$download_template_own <- downloadHandler(
+            filename = function() {
+              "reference_set_template.csv"
+            },
+            content = function(file) {
+              file.copy("own_template.csv", file)
+            }
+          )
           
         } else if (input$input_type == "fetch")  {
           
@@ -486,6 +491,16 @@ server <- function(input, output, session) {
               print(variant_data_df) # DEBUG
               return (variant_data_df)
         })
+          
+          # Server logic for download template
+          output$download_template_oc <- downloadHandler(
+            filename = function() {
+              "reference_set_template.csv"
+            },
+            content = function(file) {
+              file.copy("oc_template.csv", file)
+            }
+          )
         }
       
       
@@ -597,6 +612,7 @@ server <- function(input, output, session) {
             selected_scores = selected_scores,
             B_org = B_org,
             P_org = P_org,
+            common_variant_filter = exclude_common_variants,
             prcfiltered = prcfiltered,  # Save the filtered data for metadata
             extra_colors = extra_colors  # Store extra colors for additional predictors if any
           ))
@@ -692,6 +708,7 @@ server <- function(input, output, session) {
                               params = list(
                                 gene_s = plot_info$gene_s,
                                 selected_scores = plot_info$selected_scores,
+                                common_variant_filter = plot_info$common_variant_filter,
                                 B_org = plot_info$B_org,
                                 P_org = plot_info$P_org,
                                 prcfiltered = plot_info$prcfiltered

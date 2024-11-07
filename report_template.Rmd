@@ -6,6 +6,7 @@ params:
   selected_scores: NA
   B_org: NA
   P_org: NA
+  common_variant_filter: NA
   prcfiltered: NA
 ---
 
@@ -20,7 +21,7 @@ library(knitr)
 ```{r prc-plot, fig.cap="Precision-Recall Curve", echo=FALSE, results='asis', fig.width=7, fig.height=7}
 # Create the PRC plot based on the provided parameters
 draw.prc(yr2(
-  truth = params$prcfiltered$classification, 
+  truth = params$prcfiltered$clinvar, 
   scores = params$prcfiltered[params$selected_scores], 
   high = rep(FALSE, length(params$selected_scores))
 ), 
@@ -39,7 +40,8 @@ legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", params
 ### Summary of Selected Options
 
 - **Gene**: `r params$gene_s`
-- **Selected Scores**: `r paste(params$selected_scores, collapse = ", ")`
+- **Selected VEPs**: `r paste(params$selected_scores, collapse = ", ")`
+- **Common Variants Excluded**: `r params$common_variant_filter`
 - **Number of Pathogenic and Likely Pathogenic Variants**: `r params$P_org`
 - **Number of Benign and Likely Benign Variants**: `r params$B_org`
 
@@ -47,7 +49,15 @@ legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", params
 
 ```{r pressure, echo=FALSE}
 # Display the filtered data used for the PRC calculation
-knitr::kable(params$prcfiltered, col.names = c("Gene", "HGVS_Pro", "gnomAD_AF", "VARITY", "REVEL", "AlphaMissense", "Classification"), caption = "Filtered Data Used for PRC Calculation (Classification TRUE = Benign, FALSE = Pathogenic)")
+display_df <- params$prcfiltered %>%
+  dplyr::mutate(clinvar = ifelse(clinvar == TRUE, "B/LB", "P/LP")) %>%
+  dplyr::select(params$display_df, base__achange, gnomAD_AF, VARITY, REVEL, AlphaMissense, clinvar, stars)
+
+knitr::kable(
+  display_df, 
+  col.names = c("HGVS_Pro", "gnomAD_AF", "VARITY", "REVEL", "AlphaMissense", "ClinVar", "Stars"),
+  caption = "Data Used for PRC Calculation"
+)
 ```
 
 

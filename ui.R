@@ -19,55 +19,36 @@ ui <- fluidPage(
   
   # Introductory Page with Navigation
   navbarPage(
-    title = "VEPerform",
+    title = HTML("<strong style='color:blue;'>VEPerform</strong>"),
     id = "navbar",  # Set an ID for the navbarPage
     
-    # Introduction Tab
-    tabPanel("Introduction",
-             fluidRow(
-               column(6, offset = 3,
-                      h2("Welcome to VEPerform"),
-                      p("This tool allows you to evaluate the performance of variant effect predictors for your favorite genes."),
-                      p("You can either use our pre-existing dataset, fetch data live, or upload your own dataset."),
-                      
-                      # Radio buttons for selecting between using an existing dataset or uploading a new one
-                      # FIXME: used html formatting for boldfacing this. Make front-end consistent later. 
-                      radioButtons("intro_data_source", "Please select an option:",
-                                   choiceNames = list(
-                                     tags$span(tags$b("Use pre-existing set of reference variants from ClinVar:"), tags$br(), "the quickest way to generate a PRC"),
-                                     tags$span(tags$b("Advanced:"), tags$br(), "use your custom reference set and/or fetch the most up-to-date VEP scores and annotations from OpenCRAVAT")
-                                     # tags$span(tags$b("Customize and upload your own reference set:"), tags$br(), "if you have your own data and just want to use the PRC generating tool")
-                                   ),
-                                   choiceValues = list("existing", "fetch"),
-                                   selected = "existing"),
-                      
-                      # Link to API
-                      p("You can also interact with the VEPerform API ", 
-                        a("here", href = "http://127.0.0.1:4697/", target = "_blank")),
-                      
-                      # Action button to proceed
-                      actionButton("proceed_button", "Proceed", class = "btn-success")
-               )
-             )
-    ),
-    
     # Main App (Use Pre-existing Dataset) Tab
-    tabPanel("Main App",
+    tabPanel("VEPerform",
              fluidPage(
                # Introductory Text
-               tags$h3("Welcome to the Main App"),
-               tags$p("This page allows you to evaluate the performance of variant effect predictors for specific genes. Select a gene to start.
-                   You can use our pre-existing dataset or upload your own dataset to select a subset of variants for analysis. 
-                   After selecting your gene and the scores you’d like to include, generate a Precision-Recall Curve (PRC) to 
-                   visualize prediction performance. You can also view and deselect specific variants before plotting. "),
+               tags$h3("Welcome to VEPerform"),
+               tags$p(HTML("
+                      <p>How well do variant effect predictors (VEPs) work for your favorite gene? </p>
+                      <p>Of course, performance depends on what VEP score threshold is used.</p>
+                      <p>VEPerform helps you visualize this by plotting:</p>
+                      <ul>
+                        <li><strong>Precision</strong> (% of pathogenicity predictions that are correct) versus</li>
+                        <li><strong>Recall</strong> (% of known pathogenic variants that were predicted)</li>
+                      </ul>
+                      <p>Select a gene to begin.</p>
+                    ")),
                
                sidebarLayout(
                  sidebarPanel(
+                   selectizeInput("Main_gene", "Gene of Interest:", choices = NULL, options = list(maxOptions = 1000)),
                    # Radio buttons to select between uploading a dataset or using an existing one
-                   radioButtons("data_source", "Choose Dataset:",
-                                choices = list("Use Existing Full Dataset" = "existing", 
-                                               "Select Subset of Variants" = "upload"),
+                   radioButtons("data_source", "Reference Set of Pathogenic/Benign:",
+                                choices = list("Default (ClinVar)" = "existing", 
+                                               "Your Custom Subset" = "upload"),
                                 selected = "existing"),
+                   
+                   helpText(HTML("
+                    <p><strong>NOTE:</strong> Alternatively, upload your own reference set via the <strong style='color:blue;'>Advanced</strong> VEPerform tab.</p>")),
                    
                    # Conditional panel that shows upload options if the user chooses to upload their own dataset
                    conditionalPanel(
@@ -77,8 +58,6 @@ ui <- fluidPage(
                                accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
                      # actionButton("upload_guide_existing", "Upload Guide", class = "btn-info")
                    ),
-                   
-                   selectizeInput("Main_gene", "Select Gene Name:", choices = NULL, options = list(maxOptions = 1000)),
                    checkboxInput("Main_common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
                    checkboxGroupInput("Main_scores", "Select Scores to Include:",
                                       choices = list("VARITY", "REVEL", "AlphaMissense"),
@@ -125,7 +104,8 @@ ui <- fluidPage(
                      condition = "input.input_type == 'fetch'",
                      fileInput("file_fetch", "Upload CSV File. Ensure it contains columns chrom, pos, ref_base, and alt_base",
                                accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv")),
-                     helpText("Click 'Fetch VEP Data' after uploading your file to fetch data from OpenCRAVAT" ),
+                     downloadButton("download_template_oc", "Download CSV Template"),
+                     helpText("Click 'Fetch VEP Data' after uploading your file to fetch data from OpenCRAVAT"),
                      
                      checkboxGroupInput("Fetch_scores", "Select what to fetch from OpenCRAVAT:",
                                         choices = c(
@@ -162,6 +142,20 @@ ui <- fluidPage(
                )
              )
              
+    ),
+    # About Tab
+    tabPanel("About",
+             fluidRow(
+               column(12, offset = 0,
+                      h2("About VEPerform"),
+                      p("This tool allows you to evaluate the performance of variant effect predictors for your favorite genes."),
+                      p("You can either use our pre-existing dataset, fetch data from OpenCRAVAT, or upload your own dataset."),
+                      
+                      # Link to API
+                      p("You can also interact with the VEPerform API ", 
+                        a("here", href = "http://127.0.0.1:4697/", target = "_blank"))
+               )
+             )
     )
   )
 )
