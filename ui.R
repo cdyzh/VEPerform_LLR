@@ -16,14 +16,21 @@ library(DT)
 ui <- fluidPage(
   
   useShinyjs(),  # Initialize shinyjs for resetting files after error
+  # Title
+  fluidRow(
+    column(
+      width = 12,
+      align = "left",
+      HTML("<h2 style='text-align:center; color:blue;'><strong>VEPerform</strong></h2>") # CHANGE title format
+    )),
   
-  # Introductory Page with Navigation
+  # Navigation Bar
   navbarPage(
-    title = HTML("<strong style='color:blue;'>VEPerform</strong>"),
-    id = "navbar",  # Set an ID for the navbarPage
+    title = NULL,
+    id = "navbar",
     
-    # Main App (Use Pre-existing Dataset) Tab
-    tabPanel("VEPerform",
+    # Main VEPerform Tab
+    tabPanel("Basic",
              fluidPage(
                # Introductory Text
                tags$h3("Welcome to VEPerform"),
@@ -40,10 +47,12 @@ ui <- fluidPage(
                
                sidebarLayout(
                  sidebarPanel(
-                   selectizeInput("Main_gene", "Gene of Interest:", choices = NULL, options = list(maxOptions = 1000)),
+                   selectizeInput(
+                     "Main_gene", "Gene of Interest:", choices = NULL, selected = character(0), options = list(maxOptions = 1000, placeholder = "Type gene name here...")
+                   ),
                    # Radio buttons to select between uploading a dataset or using an existing one
                    radioButtons("data_source", "Reference Set of Pathogenic/Benign:",
-                                choices = list("Default (ClinVar)" = "existing", 
+                                choices = list("Default (ClinVar unfiltered)" = "existing", 
                                                "Your Custom Subset" = "upload"),
                                 selected = "existing"),
                    
@@ -56,16 +65,16 @@ ui <- fluidPage(
                      helpText("Using the outputted CSV, delete the rows for variants you would like to remove and keep only the gene and hgvs_pro columns." ),
                      fileInput("file_gene_variant", "Upload Gene and HGVS_Pro CSV File", 
                                accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
-                     # actionButton("upload_guide_existing", "Upload Guide", class = "btn-info")
                    ),
                    checkboxInput("Main_common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
                    checkboxGroupInput("Main_scores", "Select Scores to Include:",
                                       choices = list("VARITY", "REVEL", "AlphaMissense"),
                                       selected = c("VARITY", "REVEL", "AlphaMissense")),
-                   actionButton("Main_plotButton", "Generate PRC Plot"),
-                   downloadButton("Main_downloadPlotPNG", "Download PRC Plot as PNG"),
-                   downloadButton("Main_downloadPlotPDF", "Download PRC Plot and Metadata as PDF"), 
-                   downloadButton("downloadCSV", "Download Variants Used as CSV")
+                   actionButton("Main_plotButton", "Make Precision vs Recall Plot"),
+                   uiOutput("Main_download_buttons")  # Placeholder for download buttons
+                   #downloadButton("Main_downloadPlotPNG", "Download PRC Plot as PNG"),
+                   #downloadButton("Main_downloadPlotPDF", "Download PRC Plot and Metadata as PDF"), 
+                   #downloadButton("downloadCSV", "Download Variants Used as CSV")
                  ),
                  mainPanel(
                    plotOutput("Main_PRCPlot", width = "600px", height = "600px"),
@@ -75,14 +84,23 @@ ui <- fluidPage(
              )
     ),
     
+    # Advanced Tab
     tabPanel("Advanced", 
              fluidPage(
                # Introductory Text
-               tags$h3("Customizable PRC"),
-               tags$p("This option offers maximal input customizability. In this section, you can use your own reference set to generate a PRC. 
-               Ensure that your file aligns with the required specifications. You can also supplement your reference set with VEP scores from 
-               OpenCRAVAT, or create a new reference set using OpenCRAVAT. 
-              (Note: if using OpenCRAVAT, make sure you have this information for each variant: chromosome, position, reference base and alternate base.)"),
+               # tags$h3("Customizable PRC"),
+               tags$p(HTML("
+                  <p>With Advanced options you can:</p>
+                  <ul>
+                    <li>Upload your own reference variants with pathogenicity annotations</li>
+                    <li>Add scores from additional VEPs:
+                      <ul>
+                        <li>Retrieved by VEPerform from OpenCRAVAT</li>
+                        <li>Uploaded by you</li>
+                      </ul>
+                    </li>
+                  </ul>
+                ")),
                
                sidebarLayout(
                  sidebarPanel(
@@ -96,7 +114,6 @@ ui <- fluidPage(
                      fileInput("file_full", "Upload Full Reference Set CSV File",
                                accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv")),
                      actionButton("upload_guide", "Upload Guide", class = "btn-info")
-                     
                    ),
                    
                    
@@ -130,9 +147,10 @@ ui <- fluidPage(
                    # Additional controls for the plot
                    # checkboxInput("common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
                    checkboxGroupInput("scores", "Select Scores to Include:", choices = NULL, selected = NULL),
-                   actionButton("plotButton", "Generate PRC Plot"),
-                   downloadButton("downloadPlotPNG", "Download PRC Plot as PNG"),
-                   downloadButton("downloadPlotPDF", "Download PRC Plot and Metadata as PDF"),
+                   actionButton("plotButton", "Make Precision vs Recall Plot"),
+                   uiOutput("download_buttons")  # Placeholder for download buttons
+                   #downloadButton("downloadPlotPNG", "Download PRC Plot as PNG"),
+                   #downloadButton("downloadPlotPDF", "Download PRC Plot and Metadata as PDF"),
                  ),
                  
                  mainPanel(

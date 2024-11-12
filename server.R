@@ -12,14 +12,13 @@ library(jsonlite)
 library(shinycssloaders)
 library(DT)
 
-# Define server logic for the application
 server <- function(input, output, session) {
   plot_data <- reactiveVal(NULL)
   selected_variants <- reactiveVal(NULL)  # Store user-selected variants
   
-  # Giant if/else block to handle separate logic for Main App and Upload tabs
+  # Giant if/else block to handle separate logic for Main App and Advanced
   observe({
-    if (input$navbar == "VEPerform") {
+    if (input$navbar == "Basic") {
       # logic for Main App
       prcdata <- reactive({
         if (input$data_source == "upload" && !is.null(input$file_gene_variant)) {
@@ -34,29 +33,29 @@ server <- function(input, output, session) {
               footer = modalButton("Close")
             ))
             reset("file_gene_variant")
-            updateFileInput(session, "file_gene_variant", value = NULL)
+            # updateFileInput(session, "file_gene_variant", value = NULL)
             return(NULL)
           }
           
           colnames(df) <- c("base__gene", "base__achange")
           full_df <- read.csv("preprocessed.csv", stringsAsFactors = FALSE)
           df <- merge(df, full_df, by = c("base__gene", "base__achange"))
-        } else {
+        } else { # Use full existing data
           df <- read.table("preprocessed.csv", sep = ',', header = TRUE, stringsAsFactors = FALSE)
         }
         return(df)
       })
       
-      # Update gene names
+      # Update gene names based on what exists
       observe({
         df <- prcdata()
         if (!is.null(df)) {
           gene_names <- unique(df$base__gene)
-          updateSelectizeInput(session, "Main_gene", choices = gene_names, selected = gene_names[1], server = TRUE)
+          updateSelectizeInput(session, "Main_gene", choices = gene_names, selected = character(0), server = TRUE)
         }
       })
       
-      # Update scores
+      # Update scores - if a VEP is all NA, checkbox will not show up
       observe({
         req(input$Main_gene)
         df <- prcdata()
@@ -76,10 +75,10 @@ server <- function(input, output, session) {
         updateCheckboxGroupInput(session, "Main_scores", choices = available_scores, selected = available_scores)
       })
       
-      # Function to show modal with variant selection
+      # Show variant selection display
       showVariantSelectionModal <- function(df, gene_selected) {
         
-        # Create a modified dataframe for display
+        # Modified dataframe for display
         gene_display_df <- df %>% filter(base__gene == gene_selected) %>%
           select(base__gene, base__achange, clinvar, revstat, stars)
         
@@ -95,7 +94,7 @@ server <- function(input, output, session) {
           easyClose = FALSE
         ))
         
-        # Render the interactive table with checkboxes for the filtered dataframe
+        # Render the interactive table
         output$variant_table <- renderDT({
           datatable(
             gene_display_df, 
@@ -105,37 +104,31 @@ server <- function(input, output, session) {
         }, server = TRUE)
       }
       
-      # Generate PRC and open modal for variant selection
+      # Generate PRC with user selection
       observeEvent(input$Main_plotButton, {
-        gene_s <- input$Main_gene  # Get the selected gene
+        gene_s <- input$Main_gene
         prcfiltered <- prcdata() %>%
           filter(base__gene == gene_s)
         if (!is.null(df)) {
-          showVariantSelectionModal(prcfiltered, gene_s)  # Show modal with filtered variants for the selected gene
+          showVariantSelectionModal(prcfiltered, gene_s)
         }
       })
       
       # Handle the confirmation from the modal
       observeEvent(input$confirm_selection, {
         selected_rows <- input$variant_table_rows_selected  # Get selected rows from the table
-        # df <- prcdata()
-        gene_s <- input$Main_gene  # Get the selected gene
+        gene_s <- input$Main_gene
         prcfiltered <- prcdata() %>%
           filter(base__gene == gene_s)
         
         if (!is.null(prcfiltered) && length(selected_rows) > 0) {
           # Update the selected variants based on the user's choice
-          print(selected_rows) #DEBUG
           selected_df <- prcfiltered[selected_rows, ]
           selected_variants(selected_df)
           
-          # Proceed with the PRC generation using the selected variants
           gene_s <- input$Main_gene
-          print(gene_s) # DEBUG
-          
           exclude_common_variants <- input$Main_common_variant_filter
           selected_scores <- input$Main_scores
-          print("begin plot with selected variants") # DEBUG
           
           names(selected_df)[names(selected_df) == "varity_r"] <- "VARITY"
           names(selected_df)[names(selected_df) == "alphamissense__pathogenicity"] <- "AlphaMissense"
@@ -205,6 +198,17 @@ server <- function(input, output, session) {
         }
       })
       
+      output$Main_download_buttons <- renderUI({
+        req(plot_data())  # Only show if plot_data has been generated
+        
+        tagList(
+          helpText(HTML("<span style='color:black;'><strong>Download Options: </strong></span>")),
+          downloadButton("Main_downloadPlotPNG", "Download PRC Plot as PNG"),
+          downloadButton("Main_downloadPlotPDF", HTML("Download PRC Plot and <br>Metadata as PDF")), 
+          downloadButton("downloadCSV", HTML("Download Variants Used as <br>CSV"))
+        )
+      })
+      
       # Download logic for Main App
       output$Main_downloadPlotPNG <- downloadHandler(
         filename = function() {
@@ -222,6 +226,7 @@ server <- function(input, output, session) {
         }
       )
       
+      # Download PDF with metadata logic for Main App
       output$Main_downloadPlotPDF <- downloadHandler(
         filename = function() {
           paste("PRC_Report_", input$Main_gene, ".pdf", sep = "")
@@ -229,7 +234,6 @@ server <- function(input, output, session) {
         content = function(file) {
           plot_info <- plot_data()
           if (!is.null(plot_info)) {
-            # Generate the PDF report
             rmarkdown::render(input = "report_template.Rmd",
                               output_file = file,
                               params = list(
@@ -245,19 +249,17 @@ server <- function(input, output, session) {
         }
       )
       # Download prcfiltered as CSV
+      # NOTE: does this include de-selected variants? 
       output$downloadCSV <- downloadHandler(
         filename = function() {
           paste("PRC_data_", input$Main_gene, ".csv", sep = "")
         },
         content = function(file) {
-          df <- prcdata()  # Get the reactive data
+          df <- prcdata()
           gene_s <- input$Main_gene
           
-          # Filter data for the selected gene
           prcfiltered <- df %>%
             filter(base__gene == gene_s)
-          
-          # Write the prcfiltered dataframe to CSV
           write.csv(prcfiltered, file, row.names = FALSE)
         }
       )
@@ -269,8 +271,6 @@ server <- function(input, output, session) {
       #prcdata_own <- reactiveVal(NULL)
       plot_data <- reactiveVal(NULL)
       
-      # Observe changes to input$input_type
-      #observeEvent(input$input_type, {
       #logic for advanced - own
         if (input$input_type == "own") {
           prcdata <- eventReactive(input$file_full, {
@@ -287,7 +287,7 @@ server <- function(input, output, session) {
               return(NULL)
             })
             
-            # Process df
+            # Consistency for mandatory columns
             colnames(df)[colnames(df) == "gnomad__af"] <- "gnomAD_AF"
             colnames(df)[colnames(df) == "clinvar"] <- "clinvar"
             
@@ -315,7 +315,7 @@ server <- function(input, output, session) {
                 modalButton("Close")
               )
             ))
-          })
+          }, ignoreInit = TRUE)
           
           # Download template for own reference set
           output$download_template_own <- downloadHandler(
@@ -332,13 +332,13 @@ server <- function(input, output, session) {
           prcdata <- eventReactive(input$fetchButton, {
            # req(input$input_type)
             
-              # Initialize empty list to store results
+            # Initialize empty list to store results
             all_results <- list()
               
             req(input$file_fetch)
             df <- read.csv(input$file_fetch$datapath, stringsAsFactors = FALSE)
             colnames(df) <- trimws(colnames(df))
-            # Ensure 'chrom' column in df has the "chr" prefix for consistency with result_df
+            # Ensure 'chrom' column in df has the "chr" prefix for consistency
             df <- df %>%
               mutate(chrom = ifelse(grepl("^chr", as.character(chrom)), as.character(chrom), paste0("chr", chrom)))
             
@@ -652,6 +652,17 @@ server <- function(input, output, session) {
           }
         }, width = 600, height = 600, res = 72)
         
+      })
+      
+      # Download logic 
+      output$download_buttons <- renderUI({
+        req(plot_data())  # Only show if plot_data has been generated
+        
+        tagList(
+          helpText(HTML("<span style='color:black;'><strong>Download Options: </strong></span>")),
+          downloadButton("Main_downloadPlotPNG", "Download PRC Plot as PNG"),
+          downloadButton("Main_downloadPlotPDF", HTML("Download PRC Plot and <br>Metadata as PDF"))
+        )
       })
       
       output$downloadPlotPNG <- downloadHandler(
