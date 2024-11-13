@@ -287,6 +287,17 @@ server <- function(input, output, session) {
               return(NULL)
             })
             
+            # Check for necessary columns
+            if (!is.null(df) && !all(c("base__gene", "clinvar") %in% colnames(df))) {
+              showModal(modalDialog(
+                title = "Error",
+                "The uploaded CSV must contain the columns 'base__gene' and 'clinvar'.",
+                easyClose = TRUE,
+                footer = modalButton("Close")
+              ))
+              return(NULL)
+            }
+            
             # Consistency for mandatory columns
             colnames(df)[colnames(df) == "gnomad__af"] <- "gnomAD_AF"
             colnames(df)[colnames(df) == "clinvar"] <- "clinvar"
@@ -328,7 +339,35 @@ server <- function(input, output, session) {
           )
           
         } else if (input$input_type == "fetch")  {
+          # Check columns immediately upon file upload
+          observeEvent(input$file_fetch, {
+            req(input$file_fetch)
+            
+            # Read the uploaded file
+            df <- tryCatch({
+              read.csv(input$file_fetch$datapath, stringsAsFactors = FALSE)
+            }, error = function(e) {
+              showModal(modalDialog(
+                title = "Error",
+                "There was an error reading the uploaded file. Please ensure it is a valid CSV file.",
+                easyClose = TRUE,
+                footer = modalButton("Close")
+              ))
+              return(NULL)
+            })
+
+            # Check for necessary columns and show error if missing
+            if (!is.null(df) && !all(c("chrom", "pos", "ref_base", "alt_base") %in% colnames(df))) {
+              showModal(modalDialog(
+                title = "Error",
+                "The uploaded CSV must contain the columns 'chrom', 'pos', 'ref_base', 'alt_base'.",
+                easyClose = TRUE,
+                footer = modalButton("Close")
+              ))
+            }
+          })
           
+          # Prcdata reactive on fetch
           prcdata <- eventReactive(input$fetchButton, {
            # req(input$input_type)
             
@@ -337,16 +376,10 @@ server <- function(input, output, session) {
               
             req(input$file_fetch)
             df <- read.csv(input$file_fetch$datapath, stringsAsFactors = FALSE)
-            colnames(df) <- trimws(colnames(df))
+
             # Ensure 'chrom' column in df has the "chr" prefix for consistency
             df <- df %>%
               mutate(chrom = ifelse(grepl("^chr", as.character(chrom)), as.character(chrom), paste0("chr", chrom)))
-            
-            # Check for necessary columns
-            if (!all(c("chrom", "pos", "ref_base", "alt_base") %in% colnames(df))) {
-              output$errorText <- renderText("Error: The uploaded CSV must contain the columns 'chrom', 'pos', 'ref_base', 'alt_base'.")
-              return(NULL)
-            }
               
             # Show a progress bar while fetching data
             withProgress(message = 'Fetching Variant Data', value = 0, {
@@ -599,9 +632,18 @@ server <- function(input, output, session) {
         tryCatch({
           yrobj <- yr2(truth = prcfiltered[["clinvar"]], scores = prcfiltered[selected_scores], high = rep(FALSE, length(selected_scores)))
           
+          # Extra colors for lines more than 3
+          # Exclude white and near-white colors
+          available_colors <- grDevices::colors()[!grepl("white|ivory|seashell|snow|honeydew|azure|aliceblue|mintcream|ghostwhite", grDevices::colors(), ignore.case = TRUE)]
+          
           # Generate random colors for additional predictors if more than three
           num_scores <- min(length(selected_scores), 3)  # Only take a maximum of three predictors for specific styles
-          extra_colors <- if (length(selected_scores) > 3) sample(grDevices::colors(), length(selected_scores) - 3) else NULL
+          extra_colors <- if (length(selected_scores) > 3) {
+            sample(available_colors, length(selected_scores) - 3)
+          } else {
+            NULL
+          }
+          
           
           # Assign styles for the first three predictors, followed by additional random colors if needed
           plot_data(list(
@@ -633,7 +675,7 @@ server <- function(input, output, session) {
               colors_to_use <- c(plot_info$col_styles, plot_info$extra_colors)
               draw.prc(
                 plot_info$yrobj,
-                lty = c(plot_info$lty_styles, rep("solid", length(plot_info$extra_colors))),  # Default to solid for extra predictors
+                lty = c(plot_info$lty_styles, rep(c("solid", "dashed"), length(plot_info$extra_colors))),  # Default to solid for extra predictors
                 col = colors_to_use,
                 lwd = 2,
                 balanced = TRUE,
@@ -660,8 +702,8 @@ server <- function(input, output, session) {
         
         tagList(
           helpText(HTML("<span style='color:black;'><strong>Download Options: </strong></span>")),
-          downloadButton("Main_downloadPlotPNG", "Download PRC Plot as PNG"),
-          downloadButton("Main_downloadPlotPDF", HTML("Download PRC Plot and <br>Metadata as PDF"))
+          downloadButton("downloadPlotPNG", "Download PRC Plot as PNG"),
+          downloadButton("downloadPlotPDF", HTML("Download PRC Plot and <br>Metadata as PDF"))
         )
       })
       
@@ -672,19 +714,24 @@ server <- function(input, output, session) {
         content = function(file) {
           plot_info <- plot_data()
           if (!is.null(plot_info)) {
-            # Generate random colors for each score if more than three scores are selected
+            # Determine the number of scores
             num_scores <- length(plot_info$selected_scores)
+            
+            available_colors <- grDevices::colors()[!grepl("white|ivory|seashell|snow|honeydew|azure|aliceblue|mintcream|ghostwhite", grDevices::colors(), ignore.case = TRUE)]
+            # Generate color styles: use predefined for up to three scores, else generate random colors
             col_styles <- if (num_scores <= 3) {
               c("purple", "cadetblue2", "orange")[1:num_scores]
             } else {
-              colors <- grDevices::colors()
-              sample(colors, num_scores)
+              sample(available_colors, num_scores)
             }
+            
+            # Alternate line types between solid and dashed for all scores
+            lty_styles <- rep(c("solid", "dashed"), length.out = num_scores)
             
             png(file, width = 6, height = 6, units = "in", res = 72)
             draw.prc(
               plot_info$yrobj,
-              lty = rep(c("dashed", "solid", "dotted"), length.out = num_scores),
+              lty = lty_styles,
               col = col_styles,
               lwd = 2,
               balanced = TRUE,

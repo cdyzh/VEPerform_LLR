@@ -1,6 +1,12 @@
 ---
 title: "PRC Report"
-output: pdf_document
+output:
+  pdf_document:
+    keep_tex: true
+header-includes:
+  - \usepackage{pdflscape}
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
 params:
   gene_s: NA
   selected_scores: NA
@@ -14,25 +20,44 @@ params:
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 library(yogiroc)
 library(knitr)
+library(dplyr)
 ```
 
 ## Plot
 
 ```{r prc-plot, fig.cap="Precision-Recall Curve", echo=FALSE, results='asis', fig.width=7, fig.height=7}
 # Create the PRC plot based on the provided parameters
-draw.prc(yr2(
-  truth = params$prcfiltered$clinvar, 
-  scores = params$prcfiltered[params$selected_scores], 
-  high = rep(FALSE, length(params$selected_scores))
-), 
-lty = c("dashed", "solid", "dashed")[1:length(params$selected_scores)], 
-col = c("purple", "cadetblue2", "orange")[1:length(params$selected_scores)], 
-lwd = 2, 
-balanced = TRUE, 
-main = paste0(params$gene_s, " PRCs for ", paste(params$selected_scores, collapse = ", "))
+num_scores <- length(params$selected_scores)
+
+available_colors <- grDevices::colors()[!grepl("white|ivory|seashell|snow|honeydew|azure|aliceblue|mintcream|ghostwhite", grDevices::colors(), ignore.case = TRUE)]
+col_styles <- if (num_scores <= 3) {
+  c("purple", "cadetblue2", "orange")[1:num_scores]
+} else {
+  c("purple", "cadetblue2", "orange", sample(available_colors, num_scores - 3))
+}
+
+lty_styles <- rep(c("dashed", "solid"), length.out = num_scores)
+
+draw.prc(
+  yr2(
+    truth = params$prcfiltered$clinvar, 
+    scores = params$prcfiltered[params$selected_scores], 
+    high = rep(FALSE, num_scores)), 
+  lty = lty_styles,
+  col = col_styles,
+  lwd = 2,
+  balanced = TRUE,
+  main = paste0(params$gene_s, " PRCs for ", paste(params$selected_scores, collapse = ", "))
 )
 abline(h = 90, lty = "dashed")
-legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", params$P_org), paste("# of Benign and Likely Benign:", params$B_org)), pch = 15, bty = "n")
+legend(
+  "left", 
+  legend = c(
+    paste("# of Pathogenic and Likely Pathogenic:", params$P_org),
+    paste("# of Benign and Likely Benign:", params$B_org)
+  ),
+  pch = 15,
+  bty = "n")
 
 ```
 
@@ -47,16 +72,38 @@ legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", params
 
 ### Data Used
 
-```{r pressure, echo=FALSE}
+```{r pressure, echo=FALSE, results='asis'}
 # Display the filtered data used for the PRC calculation with dynamic columns
 display_df <- params$prcfiltered %>%
-  dplyr::mutate(clinvar = ifelse(clinvar == TRUE, "B/LB", "P/LP"))
+  dplyr::mutate(clinvar = ifelse(clinvar == TRUE, "B/LB", "P/LP")) %>%
+  dplyr::select(-dplyr::any_of(c("chrom", "pos", "ref_base", "alt_base", "base__gene"))) # Condenses the table
 
-knitr::kable(
+num_columns <- ncol(display_df)
+
+output <- ""
+
+# If the number of columns exceeds 8, make the page landscape
+if (num_columns > 8) {
+  output <- paste0(output, "\\newpage\n\\begin{landscape}\n")
+}
+
+table_latex <- knitr::kable(
   display_df, 
-  col.names = colnames(params$prcfiltered),  # Dynamically get the column names
-  caption = "Data Used for PRC Calculation"
+  col.names = colnames(display_df),  # Dynamically get the column names
+  caption = "Data Used for PRC Calculation",
+  format = "latex",
+  booktabs = TRUE,
+  longtable = TRUE
 )
+
+output <- paste0(output, table_latex, "\n")
+
+# End landscape format
+if (num_columns > 8) {
+  output <- paste0(output, "\\end{landscape}\n")
+}
+
+cat(output)
 
 ```
 
