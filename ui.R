@@ -49,7 +49,7 @@ ui <- fluidPage(
                    selectizeInput(
                      "Main_gene", "Gene of Interest:", choices = NULL, selected = character(0), options = list(maxOptions = 1000, placeholder = "Type gene name here...")
                    ),
-                   # Radio buttons to select between uploading a dataset or using an existing one
+                   
                    radioButtons("data_source", "Reference Set of Pathogenic/Benign:",
                                 choices = list("Default (ClinVar unfiltered)" = "existing"),
                                 selected = "existing"),
@@ -63,9 +63,6 @@ ui <- fluidPage(
                                       selected = c("VARITY", "REVEL", "AlphaMissense")),
                    actionButton("Main_plotButton", "Make Precision vs Recall Plot"),
                    uiOutput("Main_download_buttons")  # To group download buttons
-                   #downloadButton("Main_downloadPlotPNG", "Download PRC Plot as PNG"),
-                   #downloadButton("Main_downloadPlotPDF", "Download PRC Plot and Metadata as PDF"), 
-                   #downloadButton("downloadCSV", "Download Variants Used as CSV")
                  ),
                  mainPanel(
                    plotOutput("Main_PRCPlot", width = "600px", height = "600px"),
@@ -83,6 +80,7 @@ ui <- fluidPage(
                tags$p(HTML("
                   <p>With Advanced options you can:</p>
                   <ul>
+                    <li>Upload a filtered CSV from Basic Mode</li>
                     <li>Upload your own reference variants with pathogenicity annotations</li>
                     <li>Add scores from additional VEPs:
                       <ul>
@@ -104,8 +102,7 @@ ui <- fluidPage(
                      condition = "input.input_type == 'own'",
                      fileInput("file_full", "Upload Full Reference Set CSV File",
                                accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv")),
-                     actionButton("upload_guide", "Upload Guide", class = "btn-info"),
-                     # checkboxGroupInput("scores", "Select Scores to Include:", choices = NULL, selected = NULL),
+                     actionButton("upload_guide", "Upload Guide", class = "btn-info")
                    ),
                    
                    # If fetch from OpenCRAVAT
@@ -130,8 +127,7 @@ ui <- fluidPage(
                                         ),
                                         selected = c("clinvar", "gnomad")),
                      # Run OpenCRAVAT and fetch the scores
-                     actionButton("fetchButton", "Fetch VEP Data"),
-                     # checkboxGroupInput("FetchDisplay_scores", "Select Scores to Include:", choices = NULL, selected = NULL),
+                     actionButton("fetchButton", "Fetch VEP Data")
                    ),
                    
                    # selectizeInput("gene", "Select Gene Name:", choices = NULL, options = list(maxOptions = 1000)),
@@ -139,8 +135,6 @@ ui <- fluidPage(
                    # checkboxInput("common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
                    actionButton("plotButton", "Make Precision vs Recall Plot"),
                    uiOutput("download_buttons")  # To group download buttons
-                   #downloadButton("downloadPlotPNG", "Download PRC Plot as PNG"),
-                   #downloadButton("downloadPlotPDF", "Download PRC Plot and Metadata as PDF"),
                  ),
                  
                  mainPanel(

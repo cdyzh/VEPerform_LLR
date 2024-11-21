@@ -62,7 +62,7 @@ server <- function(input, output, session) {
         
         showModal(modalDialog(
           title = paste("Select Variants for Gene:", gene_selected),
-          tags$p("Would you like to de-select some variants? Click on the variants you do not want to include in the PRC. You can also do this later by downloading the csv, removing variants yourself, and uploading it back."),
+          tags$p("Would you like to de-select some variants? Click on the variants you do not want to include in the PRC. You can also do this later by downloading the CSV, removing variants yourself, and uploading it back."),
           DTOutput("variant_table"),
           footer = tagList(
             modalButton("Cancel"),
@@ -158,7 +158,8 @@ server <- function(input, output, session) {
               }, error = function(e) {
                 showModal(modalDialog(
                   title = 'Error',
-                  'Not enough data - must have at least one pathogenic and benign.',
+                  'Not enough data - must have at least one pathogenic and benign. Try selecting less VEPs or unselecting the common variant filter.
+                  You can also add your own annotations (see Advanced Tab or download VUS).',
                   easyClose = TRUE,
                   footer = NULL
                 ))
@@ -186,7 +187,11 @@ server <- function(input, output, session) {
           downloadButton("Main_downloadPlotPNG", "Download PRC Plot as PNG"),
           downloadButton("Main_downloadPlotPDF", HTML("Download PRC Plot and <br>Metadata as PDF")), 
           downloadButton("Main_downloadCSV", HTML("Download Variants Used as <br>CSV")),
-          downloadButton("downloadCSV_VUS", HTML("Download CSV with VUS"))
+          div(
+            style = "display: inline-flex; align-items: center;",
+            downloadButton("downloadCSV_VUS", HTML("Download CSV with VUS")),
+            actionLink("helpButton_VUS", label = NULL, icon = icon("question-circle"), style = "margin-left: 5px;")
+          )
         )
       })
       
@@ -261,6 +266,17 @@ server <- function(input, output, session) {
         }
       )
       
+      # VUS explanation help button
+      observeEvent(input$helpButton_VUS, {
+        showModal(modalDialog(
+          title = "What is VUS?",
+          HTML("VUS stands for Variants of Uncertain Significance. These variants are not included in the PRC generation as they are not classified as Pathogenic or Benign. 
+          However, by downloading this CSV, you can override the VUS/Conflicting annotations and reupload it as a custom reference set in Advanced Mode."),
+          easyClose = TRUE,
+          footer = modalButton("Close")
+        ))
+      })
+      
       # Plot explanation help button
       observeEvent(input$Main_helpButton, {
         showModal(modalDialog(
@@ -276,40 +292,39 @@ server <- function(input, output, session) {
           footer = modalButton("Close")
         ))
       })
-        
-        
+      
+      
     } else {
       # Logic for Advanced
-      plot_data <- reactiveVal(NULL)
+      rv <- reactiveValues(
+        state = reactiveValues(gnomad_filter_inserted = FALSE)
+      )
       
-      # Define placeholder functions
-      prcdata_fetch <- reactive({NULL})
-      prcdata_own <- reactive({NULL})
+      # Define reactive values
+      rv$prcdata_own <- reactiveVal(NULL)
+      rv$prcdata_fetch <- reactiveVal(NULL)
+      rv$plot_data <- reactiveVal(NULL)
       
+      # Observe 'input$input_type' to reset reactive values and inputs when user switches option
       observeEvent(input$input_type, {
-        # Reset inputs
+        rv$plot_data(NULL)
+        rv$prcdata_fetch(NULL)
+        rv$prcdata_own(NULL)
+        rv$state$gnomad_filter_inserted <- FALSE
+        
         updateCheckboxGroupInput(session, "scores", choices = NULL, selected = NULL)
         removeUI(selector = "#gnomad_filter_wrapper", immediate = TRUE)
       })
       
-      # Logic for advanced - own
+      # Logic for 'own' input_type
+      observeEvent(input$file_full, {
         if (input$input_type == "own") {
-          prcdata_own <- eventReactive(input$file_full, {
+          df <- tryCatch({
             req(input$file_full)
-            df <- tryCatch({
-              read.csv(input$file_full$datapath, stringsAsFactors = FALSE)
-            }, error = function(e) {
-              showModal(modalDialog(
-                title = "Error",
-                "There was an error reading the uploaded file. Please ensure it is a valid CSV file.",
-                easyClose = TRUE,
-                footer = modalButton("Close")
-              ))
-              return(NULL)
-            })
+            df <- read.csv(input$file_full$datapath, stringsAsFactors = FALSE)
             
             # Check for necessary columns
-            if (!is.null(df) && !all(c("base__gene", "clinvar") %in% colnames(df))) {
+            if (!all(c("base__gene", "clinvar") %in% colnames(df))) {
               showModal(modalDialog(
                 title = "Error",
                 "The uploaded CSV must contain the columns 'base__gene' and 'clinvar'.",
@@ -323,16 +338,27 @@ server <- function(input, output, session) {
             colnames(df)[colnames(df) == "gnomad__af"] <- "gnomAD_AF"
             colnames(df)[colnames(df) == "clinvar"] <- "clinvar"
             
-            return (df)
-          })
-          
-          # Guide on how to format user-inputted csv
-          observeEvent(input$upload_guide, {
+            df
+          }, error = function(e) {
             showModal(modalDialog(
-              title = "Reference Set Format Information",
-              HTML("Please ensure your own reference set is a CSV file.<br><br>
+              title = "Error",
+              "There was an error reading the uploaded file. Please ensure it is a valid CSV file.",
+              easyClose = TRUE,
+              footer = modalButton("Close")
+            ))
+            NULL
+          })
+          rv$prcdata_own(df)  # Set the reactiveVal
+        }
+      })
+      
+      # Guide on how to format user-inputted csv
+      observeEvent(input$upload_guide, {
+        showModal(modalDialog(
+          title = "Reference Set Format Information",
+          HTML("Please ensure your own reference set is a CSV file.<br><br>
             Mandatory columns:<br>
-            <b>base__gene:</b> Gene name(s)<br>
+            <b>base__gene:</b> Gene name<br>
             <b>clinvar:</b> Variant interpretation (B/LB or P/LP)<br><br>
             
             Optional columns: <br>
@@ -341,63 +367,48 @@ server <- function(input, output, session) {
             For any predictors or custom scores that you would like to include, put 'VEP_' before the name of the column. For example:<br>
             <b>VEP_alphamissense:</b> AlphaMissense score<br>
             <b>VEP_custom:</b> Additional scores you would like to include<br><br>"),
-              easyClose = FALSE,
-              footer = tagList(
-                downloadButton("download_template_own", "Download CSV Template"),
-                modalButton("Close")
-              )
-            ))
-          }, ignoreInit = TRUE)
-          
-          # Download template for own reference set
-          output$download_template_own <- downloadHandler(
-            filename = function() {
-              "reference_set_template.csv"
-            },
-            content = function(file) {
-              file.copy("own_template.csv", file)
-            }
+          easyClose = FALSE,
+          footer = tagList(
+            downloadButton("download_template_own", "Download CSV Template"),
+            modalButton("Close")
           )
+        ))
+      }, ignoreInit = TRUE)
+      
+      # Download template for own reference set
+      output$download_template_own <- downloadHandler(
+        filename = function() {
+          "reference_set_template.csv"
+        },
+        content = function(file) {
+          file.copy("own_template.csv", file)
+        }
+      )
+      
+      # Download OC reference template
+      output$download_template_oc <- downloadHandler(
+        filename = function() {
+          "reference_set_template.csv"
+        },
+        content = function(file) {
+          file.copy("oc_template.csv", file)
+        }
+      )
+      
+      # Logic for 'fetch' input_type
+      observeEvent(input$fetchButton, {
+        if (input$input_type == "fetch") {
+          # Initialize empty list to store results
+          all_results <- list()
           
-        } else if (input$input_type == "fetch")  {
-          # Check columns immediately upon file upload
-          observeEvent(input$file_fetch, {
-            req(input$file_fetch)
-            
-            df <- tryCatch({
-              read.csv(input$file_fetch$datapath, stringsAsFactors = FALSE)
-            }, error = function(e) {
-              showModal(modalDialog(
-                title = "Error",
-                "There was an error reading the uploaded file. Please ensure it is a valid CSV file.",
-                easyClose = TRUE,
-                footer = modalButton("Close")
-              ))
-              return(NULL)
-            })
-
-            # Check for necessary columns
-            if (!is.null(df) && !all(c("chrom", "pos", "ref_base", "alt_base") %in% colnames(df))) {
-              showModal(modalDialog(
-                title = "Error",
-                "The uploaded CSV must contain the columns 'chrom', 'pos', 'ref_base', 'alt_base'.",
-                easyClose = TRUE,
-                footer = modalButton("Close")
-              ))
-            }
-          })
-          
-          prcdata_fetch <- eventReactive(input$fetchButton, {
-            # Initialize empty list to store results
-            all_results <- list()
-              
+          tryCatch({
             req(input$file_fetch)
             df <- read.csv(input$file_fetch$datapath, stringsAsFactors = FALSE)
-
-            # Ensure 'chrom' column in df has the "chr" prefix for consistency
+            
+            # Ensure 'chrom' column in df always has the "chr" prefix for consistency
             df <- df %>%
               mutate(chrom = ifelse(grepl("^chr", as.character(chrom)), as.character(chrom), paste0("chr", chrom)))
-              
+            
             # Show progress while fetching data
             withProgress(message = 'Fetching Variant Data', value = 0, {
               for (i in 1:nrow(df)) {
@@ -415,16 +426,13 @@ server <- function(input, output, session) {
                   "&ref_base=", ref,
                   "&alt_base=", alt,
                   "&annotators=", paste(sub("varity_er", "varity_r", tolower(input$Fetch_scores)), collapse = ",") 
-                  # For special case for VARITY_ER since it is under VARITY_R
                 )
                 
-                # Make the GET request to OpenCRAVAT
                 response <- GET(api_url)
-                
-                # Parse the JSON response
+
                 result <- fromJSON(content(response, "text"), flatten = TRUE)
                 
-                # Extract into corresponding columns - always present in result_list
+                # Extract gene and achange into corresponding columns
                 gene <- ifelse(!is.null(result$crx$hugo), result$crx$hugo, NA)
                 achange <- ifelse(!is.null(result$crx$achange), result$crx$achange, NA)
                 
@@ -444,7 +452,7 @@ server <- function(input, output, session) {
                   result_list[["base__achange"]] <- achange
                 }
                 
-                # Mapping from possible scores to their corresponding data
+                # Mapping possible scores from API result to data
                 score_mappings <- list(
                   "gnomad" = list(
                     column_name = "gnomAD_AF",
@@ -496,16 +504,14 @@ server <- function(input, output, session) {
                   )
                 )
                 
-                # Loop over the selected scores, adding columns to result_list or updating existing columns
                 for (score in input$Fetch_scores) {
                   if (score %in% names(score_mappings)) {
                     mapping <- score_mappings[[score]]
-                    # Check if column already exists in df
                     if (mapping$column_name %in% colnames(df)) {
-                      # Update the existing column in df directly
+                      # Update column if it already exists
                       df[[mapping$column_name]][i] <- mapping$value
                     } else {
-                      # Add new column to result_list
+                      # Add as new column
                       result_list[[mapping$column_name]] <- mapping$value
                     }
                   }
@@ -514,51 +520,44 @@ server <- function(input, output, session) {
                 result_df <- as.data.frame(result_list, stringsAsFactors = FALSE)
                 all_results[[i]] <- result_df
                 
+                # Show progress bar
                 incProgress(1 / nrow(df))
                 showNotification(paste(i, "/", nrow(df), "variants fetched"), duration = 3, type = "message")
-                }
               }
-              )
-              
-              # Combine all results into a data frame
-              variant_data_df <- do.call(rbind, all_results)
-              
-              # Join variant_data_df with the original df on chrom, pos, ref_base, alt_base
-              variant_data_df <- dplyr::left_join(df, variant_data_df, by = c("chrom", "pos", "ref_base", "alt_base"))
-              
-              # Clear any error message
-              output$errorText <- renderText("")
-              return (variant_data_df)
-        })
-          
-          # Download OC reference template
-          output$download_template_oc <- downloadHandler(
-            filename = function() {
-              "reference_set_template.csv"
-            },
-            content = function(file) {
-              file.copy("oc_template.csv", file)
-            }
-          )
+            })
+            
+            # Combine all results into a data frame
+            variant_data_df <- do.call(rbind, all_results)
+
+            variant_data_df <- dplyr::left_join(df, variant_data_df, by = c("chrom", "pos", "ref_base", "alt_base"))
+            
+            output$errorText <- renderText("")
+            rv$prcdata_fetch(variant_data_df)  # Set the reactiveVal
+          }, error = function(e) {
+            showModal(modalDialog(
+              title = "Error",
+              "An error occurred while fetching data.",
+              easyClose = TRUE,
+              footer = modalButton("Close")
+            ))
+            rv$prcdata_fetch(NULL)
+          })
         }
+      })
       
-      # prcdata changes depending on input type
+      
+      # Define 'prcdata' reactive depending on where it comes from (own or fetched)
       prcdata <- reactive({
         if (input$input_type == "own") {
-          prcdata_own()
+          rv$prcdata_own()
         } else if (input$input_type == "fetch") {
-          prcdata_fetch()
+          rv$prcdata_fetch()
         } else {
           NULL
         }
       })
       
-      df <- prcdata()
-      
-      # Initialize reactiveValues to store the state of the gnomad checkbox insertion
-      state <- reactiveValues(gnomad_filter_inserted = FALSE)
-      
-      # Observe when prcdata changes
+      # Observe when prcdata changes to add gnomAD checkbox
       observeEvent(prcdata(), {
         df <- prcdata()
         if (is.null(df)) return()
@@ -568,7 +567,7 @@ server <- function(input, output, session) {
         gnomad_columns <- grep("gnomad", colnames_lower, value = TRUE)
         
         # If gnomAD columns are found and the checkbox is not yet added
-        if (length(gnomad_columns) > 0 && !state$gnomad_filter_inserted) {
+        if (length(gnomad_columns) > 0 && !rv$state$gnomad_filter_inserted) {
           # Remove any existing checkbox to prevent duplicates
           removeUI(selector = "#gnomad_filter_wrapper", immediate = TRUE)
           
@@ -582,44 +581,35 @@ server <- function(input, output, session) {
                                    value = TRUE)
             )
           )
-          state$gnomad_filter_inserted <- TRUE
+          rv$state$gnomad_filter_inserted <- TRUE
           
-        } else if (length(gnomad_columns) == 0 && state$gnomad_filter_inserted) {
+        } else if (length(gnomad_columns) == 0 && rv$state$gnomad_filter_inserted) {
           # Remove the checkbox if no gnomAD columns are found and it’s currently inserted
           removeUI(selector = "#gnomad_filter_wrapper", immediate = TRUE)
-          state$gnomad_filter_inserted <- FALSE
+          rv$state$gnomad_filter_inserted <- FALSE
         }
-      })
-      
-      
-      
-      observeEvent(prcdata(), {
-        df <- prcdata()
         
-        # Detect all columns with the "VEP_" prefix
+        # Remove "VEP_" prefix from predictor column names for display
         predictor_columns <- colnames(df)[grepl("^VEP_", colnames(df))]
-        
-        # Remove "VEP_" prefix from predictor column names
         predictor_columns <- gsub("^VEP_", "", predictor_columns)
-        
-        # Update checkboxGroupInput with detected predictor columns
+        # Update checkboxGroupInput with trimmed predictor columns
         updateCheckboxGroupInput(session, "scores", choices = predictor_columns, selected = predictor_columns)
       })
       
+      # Observe 'plotButton'
       observeEvent(input$plotButton, {
         df <- prcdata()
-        df <- df[!is.na(df$clinvar), ]
-        
         if (is.null(df) || nrow(df) == 0) {
           output$errorText <- renderText("Not enough rows to generate the PRC plot.")
           return()
         }
+        df <- df[!is.na(df$clinvar), ]
         
-        gene_s <- df$base__gene[1]
+        gene_s <- ifelse("base__gene" %in% colnames(df), df$base__gene[1], "Custom Gene")
         exclude_common_variants <- input$common_variant_filter
         selected_scores <- input$scores
-        
-        if (exclude_common_variants) {
+
+        if (exclude_common_variants && "gnomAD_AF" %in% colnames(df)) {
           df <- df[is.na(df$gnomAD_AF) | df$gnomAD_AF <= 0.005, ]
         }
         
@@ -632,9 +622,8 @@ server <- function(input, output, session) {
           filter(rowSums(!is.na(df[selected_scores])) > 0) %>%
           mutate(clinvar = ifelse(clinvar == "B/LB", TRUE, FALSE))
         
-        print(prcfiltered) # DEBUG
-        B_org <- sum(prcfiltered$clinvar == TRUE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
-        P_org <- sum(prcfiltered$clinvar == FALSE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
+        B_org <- sum(prcfiltered$clinvar == TRUE)
+        P_org <- sum(prcfiltered$clinvar == FALSE)
         
         tryCatch({
           yrobj <- yr2(truth = prcfiltered[["clinvar"]], scores = prcfiltered[selected_scores], high = rep(FALSE, length(selected_scores)))
@@ -652,7 +641,7 @@ server <- function(input, output, session) {
           }
           
           # Assign styles for the first three predictors, followed by additional random colors if needed
-          plot_data(list(
+          rv$plot_data(list(
             yrobj = yrobj,
             lty_styles = c("dashed", "solid", "dashed")[1:num_scores],
             col_styles = c("purple", "cadetblue2", "orange")[1:num_scores],
@@ -668,12 +657,12 @@ server <- function(input, output, session) {
           output$errorText <- renderText("")
           
         }, error = function(e) {
-          plot_data(NULL)
+          rv$plot_data(NULL)
           output$errorText <- renderText("Error generating plot.")
         })
         
         output$prcPlot <- renderPlot({
-          plot_info <- plot_data()
+          plot_info <- rv$plot_data()
           if (!is.null(plot_info)) {
             tryCatch({
               colors_to_use <- c(plot_info$col_styles, plot_info$extra_colors)
@@ -697,12 +686,11 @@ server <- function(input, output, session) {
             })
           }
         }, width = 600, height = 600, res = 72)
-        
       })
       
       # Download logic 
       output$download_buttons <- renderUI({
-        req(plot_data())  # Only show if plot_data has been generated
+        req(rv$plot_data())  # Only show if plot has been generated
         
         tagList(
           actionButton("helpButton", "Plot Explanation", class = "btn-info"),
@@ -718,7 +706,7 @@ server <- function(input, output, session) {
           paste("PRC_plot_", Sys.Date(), ".png", sep = "")
         },
         content = function(file) {
-          plot_info <- plot_data()
+          plot_info <- rv$plot_data()
           if (!is.null(plot_info)) {
             num_scores <- length(plot_info$selected_scores)
             
@@ -762,7 +750,7 @@ server <- function(input, output, session) {
           paste("PRC_Report_", Sys.Date(), ".pdf", sep = "")
         },
         content = function(file) {
-          plot_info <- plot_data()
+          plot_info <- rv$plot_data()
           if (!is.null(plot_info)) {
             rmarkdown::render(input = "report_template_custom.Rmd",
                               output_file = file,
@@ -775,16 +763,16 @@ server <- function(input, output, session) {
                                 prcfiltered = plot_info$prcfiltered
                               ),
                               envir = new.env(parent = globalenv()))
+          }
         }
-      }
-    )
+      )
       
       output$downloadCSV <- downloadHandler(
         filename = function() {
           paste("PRC_data_", Sys.Date(), ".csv", sep = "")
         },
         content = function(file) {
-          plot_info <- plot_data()
+          plot_info <- rv$plot_data()
           if (!is.null(plot_info) && !is.null(plot_info$prcfiltered) && nrow(plot_info$prcfiltered) > 0) {
             prcfiltered <- plot_info$prcfiltered
             prcfiltered <- prcfiltered %>%
@@ -794,29 +782,22 @@ server <- function(input, output, session) {
         }
       )
       
+      # ObserveEvent for helpButton
       observeEvent(input$helpButton, {
         showModal(modalDialog(
           title = "Plot Explanation",
           HTML("<p><b>What is balanced precision?</b></p>
-            <p>Balanced precision is useful in situations where the class distribution is imbalanced. In other words, it is the precision that would have been expected had the proportion of positive examples been balanced (equal to 50%).</p>"),
+      <p>Balanced precision is useful in situations where the class distribution is imbalanced. In other words, it is the precision that would have been expected had the proportion of positive examples been balanced (equal to 50%).</p>"),
           p("Definition ", 
             a("here", href = "https://doi.org/10.1016/j.ajhg.2021.08.012", target = "_blank")),
           HTML("<p><b>What are R90BP and AUBPRC?</b></p>
-          <p><b>R90BP:</b> The recall achieved at a stringent (90%) balanced precision threshold </p>
-          <p><b>AUBPRC:</b> The area under the BPRC curve</p>"),
+      <p><b>R90BP:</b> The recall achieved at a stringent (90%) balanced precision threshold </p>
+      <p><b>AUBPRC:</b> The area under the BPRC curve</p>"),
           easyClose = TRUE,
           footer = modalButton("Close")
         ))
       })
     }
+    
   })
 }
-
-
-
-
-
-
-
-
-  
