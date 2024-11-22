@@ -151,7 +151,8 @@ ui <- fluidPage(
                column(12, offset = 0,
                       h2("About VEPerform"),
                       p("This tool allows you to evaluate the performance of variant effect predictors for your favorite genes."),
-                      p("VEPerform is developed by Cindy Zhang at the Roth Lab at the University of Pittsburgh.")
+                      p("VEPerform was developed by Cindy Zhang at the Roth Lab at the University of Pittsburgh."),
+                      p("Citation:")
                )
              )
     )

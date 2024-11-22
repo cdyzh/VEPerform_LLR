@@ -255,7 +255,7 @@ server <- function(input, output, session) {
           paste("PRC_data_VUS_", input$Main_gene, ".csv", sep = "")
         },
         content = function(file) {
-          df_VUS <- read.csv("preprocessed_VUS.csv", stringsAsFactors = FALSE)
+          df_VUS <- read.csv("full.csv", stringsAsFactors = FALSE)
           gene_s <- input$Main_gene
           
           prcfiltered <- df_VUS %>%
@@ -269,20 +269,22 @@ server <- function(input, output, session) {
       # VUS explanation help button
       observeEvent(input$helpButton_VUS, {
         showModal(modalDialog(
-          title = "What is VUS?",
-          HTML("VUS stands for Variants of Uncertain Significance. These variants are not included in the PRC generation as they are not classified as Pathogenic or Benign. 
-          However, by downloading this CSV, you can override the VUS/Conflicting annotations and reupload it as a custom reference set in Advanced Mode."),
+          title = "What does this data include?",
+          HTML("In addition to P/LP or B/LB variants, this download includes VUS and Conflicting variants. 
+          VUS stands for Variants of Uncertain Significance, and Conflicting means conflicting interpretations of pathogenicity. 
+          These variants are not included in the PRC generation as they are not classified as Pathogenic or Benign. 
+          However, by downloading this CSV, you can override the VUS or Conflicting annotations and reupload it as a custom reference set in Advanced Mode."),
           easyClose = TRUE,
           footer = modalButton("Close")
         ))
-      })
+      }, ignoreInit = TRUE)
       
       # Plot explanation help button
       observeEvent(input$Main_helpButton, {
         showModal(modalDialog(
           title = "Plot Explanation",
           HTML("<p><b>What is balanced precision?</b></p>
-            <p>Balanced precision is useful in situations where the class distribution is imbalanced. In other words, it is the precision that would have been expected had the proportion of positive examples been balanced (equal to 50%).</p>"),
+            <p>Balanced precision is useful in situations where the class distribution of the test set is imbalanced. In other words, it is the precision that would have been expected had the proportion of 'P/LP' examples been balanced (equal to 50%).</p>"),
           p("Definition ", 
             a("here", href = "https://doi.org/10.1016/j.ajhg.2021.08.012", target = "_blank")),
           HTML("<p><b>What are R90BP and AUBPRC?</b></p>

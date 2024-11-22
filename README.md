@@ -1,6 +1,6 @@
 # VEPerform
 
-**VEPerform** is an interactive web application built with **Shiny** to analyze and visualize the performance of Variant Effect Predictors (VEPs) using Balanced Precision-Recall Curves (BPRC).
+**VEPerform** is an interactive web application built with **Shiny** to analyze and visualize the performance of Variant Effect Predictors (VEPs) using Balanced Precision-Recall Curves (BPRCs).
 
 ## Features
 
