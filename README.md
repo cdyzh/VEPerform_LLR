@@ -36,4 +36,4 @@
 - Download plots and associated data for further analysis or reporting.
 
 ## Installation
-- This is currently a Web App at https://cdyzh.shinyapps.io/veperform/. To install, clone this repository and extract preprocessed_VUS.csv from its folder. 
+- This is currently a Web App at https://cdyzh.shinyapps.io/veperform/. To install, clone this repository and extract full.csv from its folder. 
