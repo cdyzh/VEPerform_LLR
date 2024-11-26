@@ -189,8 +189,8 @@ server <- function(input, output, session) {
           downloadButton("Main_downloadCSV", HTML("Download Variants Used as <br>CSV")),
           div(
             style = "display: inline-flex; align-items: center;",
-            downloadButton("downloadCSV_VUS", HTML("Download CSV with VUS")),
-            actionLink("helpButton_VUS", label = NULL, icon = icon("question-circle"), style = "margin-left: 5px;")
+            downloadButton("Main_downloadCSV_VUS", HTML("Download CSV with VUS")),
+            actionLink("Main_helpButton_VUS", label = NULL, icon = icon("question-circle"), style = "margin-left: 5px;")
           )
         )
       })
@@ -250,7 +250,7 @@ server <- function(input, output, session) {
       )
       
       # Download CSV with VUS
-      output$downloadCSV_VUS <- downloadHandler(
+      output$Main_downloadCSV_VUS <- downloadHandler(
         filename = function() {
           paste("PRC_data_VUS_", input$Main_gene, ".csv", sep = "")
         },
@@ -267,7 +267,7 @@ server <- function(input, output, session) {
       )
       
       # VUS explanation help button
-      observeEvent(input$helpButton_VUS, {
+      observeEvent(input$Main_helpButton_VUS, {
         showModal(modalDialog(
           title = "What does this data include?",
           HTML("In addition to P/LP or B/LB variants, this download includes VUS and Conflicting variants. 
@@ -306,6 +306,7 @@ server <- function(input, output, session) {
       rv$prcdata_own <- reactiveVal(NULL)
       rv$prcdata_fetch <- reactiveVal(NULL)
       rv$plot_data <- reactiveVal(NULL)
+      rv$variant_data_df <- reactiveVal(NULL)
       
       # Observe 'input$input_type' to reset reactive values and inputs when user switches option
       observeEvent(input$input_type, {
@@ -495,8 +496,12 @@ server <- function(input, output, session) {
                       clinvar_sig <- tolower(result$clinvar$sig)
                       if (grepl("benign", clinvar_sig)) {
                         "B/LB"
-                      } else if (grepl("pathogenic", clinvar_sig) && !grepl("conflicting", clinvar_sig)) {
+                      } else if (grepl("conflicting", clinvar_sig)) {
+                        "Conflicting"
+                      } else if (grepl("pathogenic", clinvar_sig)) {
                         "P/LP"
+                      } else if (grepl("uncertain", clinvar_sig)) {
+                        "VUS"
                       } else {
                         NA
                       }
@@ -535,6 +540,8 @@ server <- function(input, output, session) {
             
             output$errorText <- renderText("")
             rv$prcdata_fetch(variant_data_df)  # Set the reactiveVal
+            rv$variant_data_df <- variant_data_df
+            print(variant_data_df) # DEBUG
           }, error = function(e) {
             showModal(modalDialog(
               title = "Error",
@@ -605,7 +612,6 @@ server <- function(input, output, session) {
           output$errorText <- renderText("Not enough rows to generate the PRC plot.")
           return()
         }
-        df <- df[!is.na(df$clinvar), ]
         
         gene_s <- ifelse("base__gene" %in% colnames(df), df$base__gene[1], "Custom Gene")
         exclude_common_variants <- input$common_variant_filter
@@ -622,7 +628,9 @@ server <- function(input, output, session) {
         
         prcfiltered <- df %>%
           filter(rowSums(!is.na(df[selected_scores])) > 0) %>%
-          mutate(clinvar = ifelse(clinvar == "B/LB", TRUE, FALSE))
+          mutate(clinvar = ifelse(clinvar == "B/LB", TRUE, ifelse(clinvar == "P/LP", FALSE, NA)))
+        
+        prcfiltered <- prcfiltered[!is.na(prcfiltered$clinvar), ]
         
         B_org <- sum(prcfiltered$clinvar == TRUE)
         P_org <- sum(prcfiltered$clinvar == FALSE)
@@ -699,7 +707,16 @@ server <- function(input, output, session) {
           helpText(HTML("<span style='color:black;'><strong>Download Options: </strong></span>")),
           downloadButton("downloadPlotPNG", "Download PRC Plot as PNG"),
           downloadButton("downloadPlotPDF", HTML("Download PRC Plot and <br>Metadata as PDF")),
-          downloadButton("downloadCSV", HTML("Download Variants Used as <br>CSV"))
+          downloadButton("downloadCSV", HTML("Download Variants Used as <br>CSV")),
+          if (is.data.frame(rv$variant_data_df) && nrow(rv$variant_data_df) > 0) { # Only if getting data from fetch
+            div(
+              style = "display: inline-flex; align-items: center;",
+              downloadButton("downloadCSV_VUS", HTML("Download CSV with VUS")),
+              actionLink("helpButton_VUS", label = NULL, icon = icon("question-circle"), style = "margin-left: 5px;")
+            )
+          } else {
+            NULL
+          }
         )
       })
       
@@ -783,6 +800,28 @@ server <- function(input, output, session) {
           }
         }
       )
+      
+      output$downloadCSV_VUS <- downloadHandler(
+        filename = function() {
+          paste("PRC_data_VUS", Sys.Date(), ".csv", sep = "")
+        },
+        content = function(file) {
+          req(rv$variant_data_df)
+          write.csv(rv$variant_data_df, file, row.names = FALSE)
+        }
+      )
+      
+      observeEvent(input$helpButton_VUS, {
+        showModal(modalDialog(
+          title = "What does this data include?",
+          HTML("In addition to P/LP or B/LB variants, this download includes VUS and Conflicting variants. 
+          VUS stands for Variants of Uncertain Significance, and Conflicting means conflicting interpretations of pathogenicity. 
+          These variants are not included in the PRC generation as they are not classified as Pathogenic or Benign. 
+          However, by downloading this CSV, you can override the VUS or Conflicting annotations and reupload it as a custom reference set in Advanced Mode."),
+          easyClose = TRUE,
+          footer = modalButton("Close")
+        ))
+      }, ignoreInit = TRUE)
       
       # ObserveEvent for helpButton
       observeEvent(input$helpButton, {

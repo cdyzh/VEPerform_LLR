@@ -17,7 +17,7 @@
 
 - **Variant Filtering and Selection**:
   - Interactively filter and deselect variants based on ClinVar annotation quality.
-  - Support for overriding Variants of Uncertain Significance (VUS) classification.
+  - Support for overriding Variants of Uncertain Significance (VUS) and Conflicting classification.
 
 - **Export Options**:
   - Download plot PNG and PDF with metadata.
@@ -36,4 +36,4 @@
 - Download plots and associated data for further analysis or reporting.
 
 ## Installation
-- This is currently a Web App at https://cdyzh.shinyapps.io/veperform/. To install, clone this repository and extract full.csv from its folder. 
+- This is currently a Web App at https://cdyzh.shinyapps.io/veperform/. To run your own, clone this repository and extract full.csv from its folder. 
