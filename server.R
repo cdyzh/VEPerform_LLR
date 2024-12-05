@@ -170,53 +170,68 @@ server <- function(input, output, session) {
           
           # LLR Plot
           
-          print(selected_df) # DEBUG
-          #extract positive and negative reference sets
-          posRef <- unique(selected_df[selected_df$clinvar == FALSE, "base__achange"])
-          negRef <- unique(selected_df[selected_df$clinvar == TRUE, "base__achange"])
+          llr_tabs <- list()
+          llr_scores <- intersect(selected_scores, c("VARITY", "REVEL", "AlphaMissense"))
           
-          #and their scores
-          posScores <- na.omit(setNames(
-            selected_df[selected_df$base__achange %in% posRef, "VARITY"], 
-            selected_df[selected_df$base__achange %in% posRef, "base__achange"]
-          ))
-          negScores <- na.omit(setNames(
-            selected_df[selected_df$base__achange %in% negRef, "VARITY"], 
-            selected_df[selected_df$base__achange %in% negRef, "base__achange"]
-          ))
-          
-          print(posScores)
-          print(negScores) # DEbuG
-          
-          tryCatch({
-            llrObj <- buildLLR.kernel(posScores,negScores) # Add additional parameters
-            #drawDensityLLR(selected_df$VARITY,llrObj$llr,llrObj$posDens,llrObj$negDens,posScores,negScores) # Change this too
+          for (score in llr_scores) {
+            posScores <- na.omit(setNames(
+              selected_df[selected_df$clinvar == FALSE, score],
+              selected_df[selected_df$clinvar == FALSE, "base__achange"]
+            ))
+            negScores <- na.omit(setNames(
+              selected_df[selected_df$clinvar == TRUE, score],
+              selected_df[selected_df$clinvar == TRUE, "base__achange"]
+            ))
             
-            output$Main_ErrorText <- renderText("")
-            
-          }, error = function(e) {
-            plot_data(NULL)
-            output$Main_ErrorText <- renderText("Not enough data LLR")
-          })
-          
-          output$Main_LLRPlot <- renderPlot({
-            plot_info <- plot_data()
-            if (!is.null(plot_info)) {
-              tryCatch({
-                drawDensityLLR(selected_df$VARITY,llrObj$llr,llrObj$posDens,llrObj$negDens,posScores,negScores) # Change this too
-                #legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org), paste("# of Benign and Likely Benign:", plot_info$B_org)), pch = 15, bty = "n")
-              }, error = function(e) {
-                showModal(modalDialog(
-                  title = 'Error',
-                  'Not enough data',
-                  easyClose = TRUE,
-                  footer = NULL
-                ))
+            if (length(posScores) > 0 & length(negScores) > 0) {
+              llrObj <- buildLLR.kernel(posScores, negScores)
+              
+              # Preserve current iteration's variables, or else it would be same plot
+              local({
+                # Make local copies of the variables to avoid referencing loop variables
+                score_copy <- score
+                posScores_copy <- posScores
+                negScores_copy <- negScores
+                llrObj_copy <- llrObj
+                selected_df_copy <- selected_df
+                
+                plot_id <- paste0("Main_LLRPlot_", score_copy)
+                
+                output[[plot_id]] <- renderPlot({
+                  tryCatch({
+                    drawDensityLLR(
+                      selected_df_copy[[score_copy]], 
+                      llrObj_copy$llr, 
+                      llrObj_copy$posDens, 
+                      llrObj_copy$negDens, 
+                      posScores_copy, 
+                      negScores_copy
+                    )
+                  }, error = function(e) {
+                    showModal(modalDialog(
+                      title = 'Error',
+                      'Not enough data',
+                      easyClose = TRUE,
+                      footer = NULL
+                    ))
+                  })
+                }, width = 500, height = 600, res = 72)
+                
+                llr_tabs[[length(llr_tabs) + 1]] <<- tabPanel(score_copy, plotOutput(plot_id, width = "500px", height = "600px"))
               })
             }
-          }, width = 500, height = 600, res = 72)
+          }
           
-          removeModal()  # Close the modal after the user clicks "OK"
+          if (length(llr_tabs) > 0) {
+            output$Main_LLRTabs <- renderUI({
+              do.call(tabsetPanel, c(id="llr_tabs", llr_tabs))
+            })
+          } else {
+            output$Main_LLRTabs <- renderUI({
+              "No LLR plots available"
+            })
+          }
+          removeModal() 
         } else {
           showModal(modalDialog(
             title = "Error",
@@ -481,7 +496,7 @@ server <- function(input, output, session) {
                 )
                 
                 response <- GET(api_url)
-
+                
                 result <- fromJSON(content(response, "text"), flatten = TRUE)
                 
                 # Extract gene and achange into corresponding columns
@@ -584,7 +599,7 @@ server <- function(input, output, session) {
             
             # Combine all results into a data frame
             variant_data_df <- do.call(rbind, all_results)
-
+            
             variant_data_df <- dplyr::left_join(df, variant_data_df, by = c("chrom", "pos", "ref_base", "alt_base"))
             
             output$errorText <- renderText("")
@@ -665,7 +680,7 @@ server <- function(input, output, session) {
         gene_s <- ifelse("base__gene" %in% colnames(df), df$base__gene[1], "Custom Gene")
         exclude_common_variants <- input$common_variant_filter
         selected_scores <- input$scores
-
+        
         if (exclude_common_variants && "gnomAD_AF" %in% colnames(df)) {
           df <- df[is.na(df$gnomAD_AF) | df$gnomAD_AF <= 0.005, ]
         }

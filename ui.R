@@ -77,7 +77,7 @@ ui <- fluidPage(
                      # Tab for the LLR plot
                      tabPanel(
                        title = "LLR",
-                       plotOutput("Main_LLRPlot", width = "500px", height = "600px")
+                       uiOutput("Main_LLRTabs")
                      )
                    ),
                    textOutput("Main_ErrorText")
