@@ -1,0 +1,13 @@
+name: VEPerform_LLR
+title: VEPerform_LLR
+username: cdyzh
+account: cdyzh
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 13522728
+bundleId: 9469382
+url: https://cdyzh.shinyapps.io/VEPerform_LLR/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .RData|full.zip|input-template.json|plumber.R|README.md

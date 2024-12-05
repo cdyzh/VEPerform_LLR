@@ -65,7 +65,21 @@ ui <- fluidPage(
                    uiOutput("Main_download_buttons")  # To group download buttons
                  ),
                  mainPanel(
-                   plotOutput("Main_PRCPlot", width = "600px", height = "600px"),
+                   tabsetPanel(
+                     id = "plot_tabs",
+                     
+                     # Tab for the PRC plot
+                     tabPanel(
+                       title = "PRC",
+                       plotOutput("Main_PRCPlot", width = "600px", height = "600px")
+                     ),
+                     
+                     # Tab for the LLR plot
+                     tabPanel(
+                       title = "LLR",
+                       plotOutput("Main_LLRPlot", width = "500px", height = "600px")
+                     )
+                   ),
                    textOutput("Main_ErrorText")
                  )
                )

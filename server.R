@@ -3,6 +3,7 @@ library(shiny)
 library(shinyjs)
 library(dplyr)
 library(yogiroc)
+library(maveLLR)
 library(rsconnect)
 library(rmarkdown)
 library(knitr)
@@ -166,6 +167,54 @@ server <- function(input, output, session) {
               })
             }
           }, width = 600, height = 600, res = 72)
+          
+          # LLR Plot
+          
+          print(selected_df) # DEBUG
+          #extract positive and negative reference sets
+          posRef <- unique(selected_df[selected_df$clinvar == FALSE, "base__achange"])
+          negRef <- unique(selected_df[selected_df$clinvar == TRUE, "base__achange"])
+          
+          #and their scores
+          posScores <- na.omit(setNames(
+            selected_df[selected_df$base__achange %in% posRef, "VARITY"], 
+            selected_df[selected_df$base__achange %in% posRef, "base__achange"]
+          ))
+          negScores <- na.omit(setNames(
+            selected_df[selected_df$base__achange %in% negRef, "VARITY"], 
+            selected_df[selected_df$base__achange %in% negRef, "base__achange"]
+          ))
+          
+          print(posScores)
+          print(negScores) # DEbuG
+          
+          tryCatch({
+            llrObj <- buildLLR.kernel(posScores,negScores) # Add additional parameters
+            #drawDensityLLR(selected_df$VARITY,llrObj$llr,llrObj$posDens,llrObj$negDens,posScores,negScores) # Change this too
+            
+            output$Main_ErrorText <- renderText("")
+            
+          }, error = function(e) {
+            plot_data(NULL)
+            output$Main_ErrorText <- renderText("Not enough data LLR")
+          })
+          
+          output$Main_LLRPlot <- renderPlot({
+            plot_info <- plot_data()
+            if (!is.null(plot_info)) {
+              tryCatch({
+                drawDensityLLR(selected_df$VARITY,llrObj$llr,llrObj$posDens,llrObj$negDens,posScores,negScores) # Change this too
+                #legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org), paste("# of Benign and Likely Benign:", plot_info$B_org)), pch = 15, bty = "n")
+              }, error = function(e) {
+                showModal(modalDialog(
+                  title = 'Error',
+                  'Not enough data',
+                  easyClose = TRUE,
+                  footer = NULL
+                ))
+              })
+            }
+          }, width = 500, height = 600, res = 72)
           
           removeModal()  # Close the modal after the user clicks "OK"
         } else {
