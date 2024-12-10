@@ -12,9 +12,11 @@ library(httr)
 library(jsonlite)
 library(DT)
 
+
 server <- function(input, output, session) {
   plot_data <- reactiveVal(NULL)
   selected_variants <- reactiveVal(NULL)  # Store user-selected variants
+  threshold_data <- reactiveVal(NULL) # for storing PRC thresholds - REFACTOR: include as part of prc data? - jumptag
   
   # Giant if/else block to handle separate logic for Main App and Advanced
   observe({
@@ -122,14 +124,22 @@ server <- function(input, output, session) {
           selected_df <- selected_df[order(selected_df$clinvar), ]
           
           # Convert label to T/F
-          selected_df <- selected_df %>% mutate(clinvar = ifelse(clinvar == "B/LB", TRUE, FALSE))
+          selected_df <- selected_df %>% mutate(clinvar = ifelse(clinvar == "P/LP", TRUE, FALSE))
           
           # Count # of P and B
-          B_org <- sum(selected_df$clinvar == TRUE & rowSums(!is.na(selected_df[selected_scores])) > 0)
-          P_org <- sum(selected_df$clinvar == FALSE & rowSums(!is.na(selected_df[selected_scores])) > 0)
+          P_org <- sum(selected_df$clinvar == TRUE & rowSums(!is.na(selected_df[selected_scores])) > 0)
+          B_org <- sum(selected_df$clinvar == FALSE & rowSums(!is.na(selected_df[selected_scores])) > 0)
           
           tryCatch({
-            yrobj <- yr2(truth = selected_df[["clinvar"]], scores = selected_df[selected_scores], high = rep(FALSE, length(selected_scores)))
+            yrobj <- yr2(truth = selected_df[["clinvar"]], scores = selected_df[selected_scores], high = rep(TRUE, length(selected_scores)))
+            
+            # Added for threshold calculation - jumptag
+            thresh_ranges <- calculate_thresh_range(yrobj, x = 0.9, balanced = TRUE)
+            
+            # Store thresholds for rendering
+            threshold_data(thresh_ranges)
+            
+            # end threshold
             
             plot_data(list(
               yrobj = yrobj,
@@ -168,6 +178,34 @@ server <- function(input, output, session) {
             }
           }, width = 600, height = 600, res = 72)
           
+          # Render the threshold table - jumptag
+          output$thresholdTableUI <- renderUI({
+            req(threshold_data())
+            
+            tagList(
+              h5("Threshold Table"),  # Add the title only if the table exists
+              tableOutput("thresholdTable")  
+            )
+          })
+          
+          output$thresholdTable <- renderTable({
+            req(threshold_data())
+            
+            df <- threshold_data()
+            
+            # Round numeric columns to 3 decimals if numeric
+            df <- as.data.frame(lapply(df, function(x) {
+              if (is.numeric(x)) {
+                format(round(x, 3), nsmall = 3)
+              } else {
+                x
+              }
+            }))
+            df
+          }, rownames = TRUE)
+          
+          
+          
           # LLR Plot
           
           llr_tabs <- list()
@@ -175,12 +213,12 @@ server <- function(input, output, session) {
           
           for (score in llr_scores) {
             posScores <- na.omit(setNames(
-              selected_df[selected_df$clinvar == FALSE, score],
-              selected_df[selected_df$clinvar == FALSE, "base__achange"]
-            ))
-            negScores <- na.omit(setNames(
               selected_df[selected_df$clinvar == TRUE, score],
               selected_df[selected_df$clinvar == TRUE, "base__achange"]
+            ))
+            negScores <- na.omit(setNames(
+              selected_df[selected_df$clinvar == FALSE, score],
+              selected_df[selected_df$clinvar == FALSE, "base__achange"]
             ))
             
             if (length(posScores) > 0 & length(negScores) > 0) {
@@ -690,17 +728,19 @@ server <- function(input, output, session) {
         
         df <- df[order(df$clinvar), ]
         
+        print(selected_scores) # DEBUG
+        
         prcfiltered <- df %>%
           filter(rowSums(!is.na(df[selected_scores])) > 0) %>%
-          mutate(clinvar = ifelse(clinvar == "B/LB", TRUE, ifelse(clinvar == "P/LP", FALSE, NA)))
+          mutate(clinvar = ifelse(clinvar == "P/LP", TRUE, ifelse(clinvar == "B/LB", FALSE, NA)))
         
         prcfiltered <- prcfiltered[!is.na(prcfiltered$clinvar), ]
         
-        B_org <- sum(prcfiltered$clinvar == TRUE)
-        P_org <- sum(prcfiltered$clinvar == FALSE)
+        P_org <- sum(prcfiltered$clinvar == TRUE)
+        B_org <- sum(prcfiltered$clinvar == FALSE)
         
         tryCatch({
-          yrobj <- yr2(truth = prcfiltered[["clinvar"]], scores = prcfiltered[selected_scores], high = rep(FALSE, length(selected_scores)))
+          yrobj <- yr2(truth = prcfiltered[["clinvar"]], scores = prcfiltered[selected_scores], high = rep(TRUE, length(selected_scores)))
           
           # Extra colors for lines more than 3
           # Exclude white and near-white colors
@@ -859,7 +899,7 @@ server <- function(input, output, session) {
           if (!is.null(plot_info) && !is.null(plot_info$prcfiltered) && nrow(plot_info$prcfiltered) > 0) {
             prcfiltered <- plot_info$prcfiltered
             prcfiltered <- prcfiltered %>%
-              mutate(clinvar = ifelse(clinvar == TRUE, "B/LB", "P/LP"))
+              mutate(clinvar = ifelse(clinvar == TRUE, "P/LP", "B/LB"))
             write.csv(prcfiltered, file, row.names = FALSE)
           }
         }

@@ -5,7 +5,7 @@ account: cdyzh
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 13522728
-bundleId: 9469382
+bundleId: 9469797
 url: https://cdyzh.shinyapps.io/VEPerform_LLR/
 version: 1
 asMultiple: FALSE

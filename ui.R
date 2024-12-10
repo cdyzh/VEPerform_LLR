@@ -71,7 +71,8 @@ ui <- fluidPage(
                      # Tab for the PRC plot
                      tabPanel(
                        title = "PRC",
-                       plotOutput("Main_PRCPlot", width = "600px", height = "600px")
+                       plotOutput("Main_PRCPlot", width = "600px", height = "600px"),
+                       uiOutput("thresholdTableUI") # jumptag
                      ),
                      
                      # Tab for the LLR plot
