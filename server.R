@@ -11,6 +11,7 @@ library(tinytex)
 library(httr)
 library(jsonlite)
 library(DT)
+library(ggplot2)
 
 
 server <- function(input, output, session) {
@@ -55,6 +56,19 @@ server <- function(input, output, session) {
         
         updateCheckboxGroupInput(session, "Main_scores", choices = available_scores, selected = available_scores)
       })
+      
+      # walktag - for LLR VUS plots
+      full_data <- reactive({
+        req(input$Main_gene)  # Ensure a gene is selected
+        
+        # Read and filter full.csv for the selected gene
+        df_full <- read.csv("full.csv", stringsAsFactors = FALSE)
+        df_full$clinvar[df_full$clinvar == "N/A"] <- NA # Treat as actual NA
+        df_filtered <- df_full %>% filter(base__gene == input$Main_gene & !is.na(clinvar))
+        
+        return(df_filtered)
+      })
+      
       
       # Show variant selection display
       showVariantSelectionModal <- function(df, gene_selected) {
@@ -183,7 +197,7 @@ server <- function(input, output, session) {
             req(threshold_data())
             
             tagList(
-              h5("Threshold Table"),  # Add the title only if the table exists
+              h5("Threshold at 90% Balanced Precision"),  # Add the title only if the table exists
               tableOutput("thresholdTable")  
             )
           })
@@ -202,14 +216,23 @@ server <- function(input, output, session) {
               }
             }))
             df
-          }, rownames = TRUE)
+          }, rownames = FALSE)
           
           
           
-          # LLR Plot
+          # LLR Plot - walktag
           
           llr_tabs <- list()
           llr_scores <- intersect(selected_scores, c("VARITY", "REVEL", "AlphaMissense"))
+          
+          # Retrieve filtered full data
+          full_filtered <- full_data()
+          
+          # Renaming for consistency - walktag
+          names(full_filtered)[names(full_filtered) == "VEP_varity_r"] <- "VARITY"
+          names(full_filtered)[names(full_filtered) == "VEP_alphamissense__pathogenicity"] <- "AlphaMissense"
+          names(full_filtered)[names(full_filtered) == "VEP_revel__score"] <- "REVEL"
+          names(full_filtered)[names(full_filtered) == "gnomad__af"] <- "gnomAD_AF"
           
           for (score in llr_scores) {
             posScores <- na.omit(setNames(
@@ -224,6 +247,47 @@ server <- function(input, output, session) {
             if (length(posScores) > 0 & length(negScores) > 0) {
               llrObj <- buildLLR.kernel(posScores, negScores)
               
+              full_filtered_copy <- full_filtered
+              full_filtered_copy$llr <- llrObj$llr(full_filtered_copy[[score]]) # full_filtered_copy has llr values
+              
+              # Define breakpoints and labels for the categories
+              breaks <- c(-Inf, -1.27, -0.32, 0.32, 0.64, 1.27, 2.54, Inf)
+              labels <- c(
+                "benign_strong",   # (-Inf, -1.27]
+                "benign_support",  # (-1.27, -0.32]
+                "none",            # (-0.32, 0.32]
+                "patho_support",   # (0.32, 0.64]
+                "patho_moderate",  # (0.64, 1.27]
+                "patho_strong",    # (1.27, 2.54]
+                "patho_vstrong"    # (2.54, Inf)
+              )
+              
+              # Categorize llr based on the defined bins
+              full_filtered_copy$category <- cut(full_filtered_copy$llr, breaks=breaks, labels=labels, include.lowest=TRUE)
+              
+              # Define thresholds and search range for crossings
+              llrTs <- llrThresholds(optiLLR(0.1))
+              x_range <- range(c(posScores, negScores))
+              
+              # Find where the LLR function crosses the thresholds
+              crossings_df <- findLLRcrossings(llrObj$llr, llrTs, x_range)
+              
+              # Create the stacked bar plot of clinvar vs category
+              # Assign colors as requested:
+              # dark blue for benign_strong, red for patho_vstrong, grey for none
+              # other categories lighter shades in between
+              category_colors <- c(
+                "benign_strong"   = "darkblue",
+                "benign_support"  = "lightblue",
+                "none"            = "grey",
+                "patho_support"   = "#FFC0CB",   # light pink
+                "patho_moderate"  = "#FF9999",   # medium pink
+                "patho_strong"    = "#FF6666",   # darker pink
+                "patho_vstrong"   = "red"
+              )
+              
+              plot_stack_id <- paste0("Main_Stacked_", score)
+              
               # Preserve current iteration's variables, or else it would be same plot
               local({
                 # Make local copies of the variables to avoid referencing loop variables
@@ -231,14 +295,16 @@ server <- function(input, output, session) {
                 posScores_copy <- posScores
                 negScores_copy <- negScores
                 llrObj_copy <- llrObj
-                selected_df_copy <- selected_df
+                full_filtered_copy_local <- full_filtered_copy
+                crossings_df_copy <- crossings_df
                 
                 plot_id <- paste0("Main_LLRPlot_", score_copy)
+                table_id <- paste0("Main_LLRCrossingsTable_", score_copy)
                 
                 output[[plot_id]] <- renderPlot({
                   tryCatch({
-                    drawDensityLLR(
-                      selected_df_copy[[score_copy]], 
+                    drawDensityLLR_fixedRange(
+                      full_filtered_copy_local[[score_copy]], 
                       llrObj_copy$llr, 
                       llrObj_copy$posDens, 
                       llrObj_copy$negDens, 
@@ -255,7 +321,33 @@ server <- function(input, output, session) {
                   })
                 }, width = 500, height = 600, res = 72)
                 
-                llr_tabs[[length(llr_tabs) + 1]] <<- tabPanel(score_copy, plotOutput(plot_id, width = "500px", height = "600px"))
+                # Render the stacked bar chart
+                output[[plot_stack_id]] <- renderPlot({
+                  # Make sure we have factor ordering if needed
+                  full_filtered_copy_local$clinvar <- factor(full_filtered_copy_local$clinvar, 
+                                                             levels = c("P/LP", "B/LB", "VUS", "Conflicting"))
+                  ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
+                    geom_bar(position=position_stack(reverse=TRUE)) + # reverse to put pathogenic at top like the LLR
+                    scale_fill_manual(values=category_colors) +
+                    theme_minimal() +
+                    labs(x="ClinVar Category", y="Count", fill="LLR Category") +
+                    theme(axis.text.x = element_text(angle=45, hjust=1))
+                }, width = 300, height = 500, res = 72)
+                
+                # Render the table of LLR threshold crossings
+                output[[table_id]] <- renderTable({
+                  crossings_df_copy
+                })
+                
+                # Add the plots and table to a tab
+                llr_tabs[[length(llr_tabs) + 1]] <<- tabPanel(
+                  score_copy,
+                  fluidRow(
+                    column(6, plotOutput(plot_id, width = "500px", height = "600px")),
+                    column(5, offset = 1, plotOutput(plot_stack_id, width = "300px", height = "500px"))
+                  ),
+                  tableOutput(table_id)
+                )
               })
             }
           }
@@ -643,7 +735,7 @@ server <- function(input, output, session) {
             output$errorText <- renderText("")
             rv$prcdata_fetch(variant_data_df)  # Set the reactiveVal
             rv$variant_data_df <- variant_data_df
-            print(variant_data_df) # DEBUG
+
           }, error = function(e) {
             showModal(modalDialog(
               title = "Error",
@@ -727,8 +819,6 @@ server <- function(input, output, session) {
         colnames(df) <- gsub("^VEP_", "", colnames(df))
         
         df <- df[order(df$clinvar), ]
-        
-        print(selected_scores) # DEBUG
         
         prcfiltered <- df %>%
           filter(rowSums(!is.na(df[selected_scores])) > 0) %>%

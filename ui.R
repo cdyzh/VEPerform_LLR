@@ -70,14 +70,14 @@ ui <- fluidPage(
                      
                      # Tab for the PRC plot
                      tabPanel(
-                       title = "PRC",
+                       title = "Precision-Recall Curves (PRC) - VEP Performance",
                        plotOutput("Main_PRCPlot", width = "600px", height = "600px"),
                        uiOutput("thresholdTableUI") # jumptag
                      ),
                      
                      # Tab for the LLR plot
                      tabPanel(
-                       title = "LLR",
+                       title = "Log Likelihood Ratios (LLR) - Evidence Strength",
                        uiOutput("Main_LLRTabs")
                      )
                    ),
