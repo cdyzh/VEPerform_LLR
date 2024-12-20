@@ -12,6 +12,7 @@ library(httr)
 library(jsonlite)
 library(DT)
 library(ggplot2)
+library(shinycssloaders)
 
 
 server <- function(input, output, session) {
@@ -110,6 +111,15 @@ server <- function(input, output, session) {
       
       # After confirmation from the modal
       observeEvent(input$confirm_selection, {
+        
+        # walktag - please wait modal
+        showModal(modalDialog(
+          title = "Please wait",
+          "Generating plots...",
+          footer = NULL,
+          easyClose = FALSE
+        ))
+        
         selected_rows <- input$variant_table_rows_selected
         gene_s <- input$Main_gene
         prcfiltered <- prcdata() %>%
@@ -119,6 +129,18 @@ server <- function(input, output, session) {
           # Update the selected variants based on the user's choice
           selected_df <- prcfiltered[selected_rows, ]
           selected_variants(selected_df)
+          
+          # Check that there is at least one P/LP and one B/LB - walktag
+          if (!(any(selected_df$clinvar == "P/LP") && any(selected_df$clinvar == "B/LB"))) {
+            removeModal() # remove "Please wait" modal if it's open
+            showModal(modalDialog(
+              title = "Error",
+              "You must select at least one P/LP and one B/LB variant.",
+              easyClose = TRUE,
+              footer = modalButton("Close")
+            ))
+            return()
+          }
           
           gene_s <- input$Main_gene
           exclude_common_variants <- input$Main_common_variant_filter
@@ -343,8 +365,8 @@ server <- function(input, output, session) {
                 llr_tabs[[length(llr_tabs) + 1]] <<- tabPanel(
                   score_copy,
                   fluidRow(
-                    column(6, plotOutput(plot_id, width = "500px", height = "600px")),
-                    column(5, offset = 1, plotOutput(plot_stack_id, width = "300px", height = "500px"))
+                    column(5, plotOutput(plot_id, width = "500px", height = "600px")),
+                    column(4, offset = 3, plotOutput(plot_stack_id, width = "300px", height = "500px"))
                   ),
                   tableOutput(table_id)
                 )
@@ -363,6 +385,7 @@ server <- function(input, output, session) {
           }
           removeModal() 
         } else {
+          removeModal() # In case wait modal is still visible
           showModal(modalDialog(
             title = "Error",
             "Please select at least two variants.",
