@@ -287,6 +287,8 @@ server <- function(input, output, session) {
               # Categorize llr based on the defined bins
               full_filtered_copy$category <- cut(full_filtered_copy$llr, breaks=breaks, labels=labels, include.lowest=TRUE)
               
+              full_filtered_copy <- full_filtered_copy %>% filter(!is.na(category)) # filter NA - due to score and llr being NA
+              
               # Define thresholds and search range for crossings
               llrTs <- llrThresholds(optiLLR(0.1))
               x_range <- range(c(posScores, negScores))
@@ -530,7 +532,7 @@ server <- function(input, output, session) {
         rv$plot_data(NULL)
         rv$prcdata_fetch(NULL)
         rv$prcdata_own(NULL)
-        rv$state$gnomad_filter_inserted <- FALSE
+        rv$gnomad_filter_inserted <- FALSE
         
         updateCheckboxGroupInput(session, "scores", choices = NULL, selected = NULL)
         removeUI(selector = "#gnomad_filter_wrapper", immediate = TRUE)
@@ -793,7 +795,7 @@ server <- function(input, output, session) {
         gnomad_columns <- grep("gnomad", colnames_lower, value = TRUE)
         
         # If gnomAD columns are found and the checkbox is not yet added
-        if (length(gnomad_columns) > 0 && !rv$state$gnomad_filter_inserted) {
+        if (length(gnomad_columns) > 0 && isFALSE(rv$gnomad_filter_inserted)) {
           # Remove any existing checkbox to prevent duplicates
           removeUI(selector = "#gnomad_filter_wrapper", immediate = TRUE)
           
@@ -807,12 +809,12 @@ server <- function(input, output, session) {
                                    value = TRUE)
             )
           )
-          rv$state$gnomad_filter_inserted <- TRUE
+          rv$gnomad_filter_inserted <- TRUE
           
-        } else if (length(gnomad_columns) == 0 && rv$state$gnomad_filter_inserted) {
-          # Remove the checkbox if no gnomAD columns are found and it’s currently inserted
+        } else if (length(gnomad_columns) == 0 && isTRUE(rv$gnomad_filter_inserted)) {
+          # Remove the checkbox if no gnomAD columns are found and it is still there
           removeUI(selector = "#gnomad_filter_wrapper", immediate = TRUE)
-          rv$state$gnomad_filter_inserted <- FALSE
+          rv$gnomad_filter_inserted <- FALSE
         }
         
         # Remove "VEP_" prefix from predictor column names for display
@@ -834,7 +836,7 @@ server <- function(input, output, session) {
         exclude_common_variants <- input$common_variant_filter
         selected_scores <- input$scores
         
-        if (exclude_common_variants && "gnomAD_AF" %in% colnames(df)) {
+        if (isTRUE(exclude_common_variants) && "gnomAD_AF" %in% colnames(df)) { # walktag - added isTRUE
           df <- df[is.na(df$gnomAD_AF) | df$gnomAD_AF <= 0.005, ]
         }
         
