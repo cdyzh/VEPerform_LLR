@@ -325,6 +325,14 @@ server <- function(input, output, session) {
                 plot_id <- paste0("Main_LLRPlot_", score_copy)
                 table_id <- paste0("Main_LLRCrossingsTable_", score_copy)
                 
+                # -----------------------------
+                # 1) DEFINE DOWNLOAD BUTTON IDS
+                # -----------------------------
+                download_llr_png_id <- paste0("download_", score_copy, "_llr_png")
+                download_bar_svg_id <- paste0("download_", score_copy, "_bar_svg")
+                download_both_pdf_id <- paste0("download_", score_copy, "_both_pdf")
+                download_csv_id      <- paste0("download_", score_copy, "_csv")
+                
                 output[[plot_id]] <- renderPlot({
                   tryCatch({
                     drawDensityLLR_fixedRange(
@@ -363,12 +371,128 @@ server <- function(input, output, session) {
                   crossings_df_copy
                 })
                 
-                # Add the plots and table to a tab
+                # -----------------------------------
+                # 3) DEFINE DOWNLOAD HANDLERS (NEW)
+                # -----------------------------------
+                
+                # 3a) Download LLR (PNG)
+                output[[download_llr_png_id]] <- downloadHandler(
+                  filename = function() { paste0(score_copy, "_LLRPlot.png") },
+                  content = function(file) {
+                    # Use a PNG device and re-draw the same LLR plot
+                    png(file, width = 500, height = 600, res = 72)
+                    drawDensityLLR_fixedRange(
+                      full_filtered_copy_local[[score_copy]],
+                      llrObj_copy$llr,
+                      llrObj_copy$posDens,
+                      llrObj_copy$negDens,
+                      posScores_copy,
+                      negScores_copy
+                    )
+                    dev.off()
+                  }
+                )
+                
+                # 3b) Download bar plot (PNG)
+                output[[download_bar_svg_id]] <- downloadHandler(
+                  filename = function() {
+                    paste0(score_copy, "_BarPlot.svg")
+                  },
+                  content = function(file) {
+                    # Open the SVG device
+                    svg(file, width = 5, height = 5)
+                    
+                    # Construct the ggplot as usual
+                    p <- ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
+                      geom_bar(position=position_stack(reverse=TRUE)) +
+                      scale_fill_manual(values=category_colors) +
+                      theme_minimal() +
+                      labs(x="ClinVar Category", y="Count", fill="LLR Category") +
+                      theme(axis.text.x = element_text(angle=45, hjust=1))
+                    
+                    # Print the ggplot to render onto the SVG device
+                    print(p)
+                    
+                    # Close the device
+                    dev.off()
+                  }
+                )
+                
+                # 3c) Download both (PDF)
+                output[[download_both_pdf_id]] <- downloadHandler(
+                  filename = function() { paste0(score_copy, "_LLR_and_Bar.pdf") },
+                  content = function(file) {
+                    # Create a 2-page PDF: first page = LLR plot, second page = bar plot
+                    pdf(file, width = 6, height = 6)
+                    
+                    # Page 1: LLR
+                    drawDensityLLR_fixedRange(
+                      full_filtered_copy_local[[score_copy]],
+                      llrObj_copy$llr,
+                      llrObj_copy$posDens,
+                      llrObj_copy$negDens,
+                      posScores_copy,
+                      negScores_copy
+                    )
+                    
+                    # Page 2: bar plot
+                    # 1) Create the ggplot object
+                    p <- ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
+                      geom_bar(position=position_stack(reverse=TRUE)) +
+                      scale_fill_manual(values=category_colors) +
+                      theme_minimal() +
+                      labs(x="ClinVar Category", y="Count", fill="LLR Category") +
+                      theme(axis.text.x = element_text(angle=45, hjust=1))
+                    
+                    # 2) (Optional) start a new page
+                    # grid.newpage() or plot.new() -- only if you want them on separate pages
+                    plot.new()  
+                    
+                    # 3) Print the ggplot to render it on this new page
+                    print(p)
+                    
+                    dev.off()
+                  }
+                )
+                
+                # 3d) Download CSV of variants w/ LLR + category
+                output[[download_csv_id]] <- downloadHandler(
+                  filename = function() { paste0(score_copy, "_LLR_data.csv") },
+                  content = function(file) {
+                    # This CSV includes all variants (including VUS/conflicting) 
+                    # that remain in full_filtered_copy_local, along with LLR and category
+                    write.csv(full_filtered_copy_local, file, row.names = FALSE)
+                  }
+                )
+                
+                # -----------------------------------
+                # 4) BUILD THE UI FOR THIS TAB
+                # -----------------------------------
                 llr_tabs[[length(llr_tabs) + 1]] <<- tabPanel(
                   score_copy,
                   fluidRow(
-                    column(5, plotOutput(plot_id, width = "500px", height = "600px")),
-                    column(4, offset = 3, plotOutput(plot_stack_id, width = "300px", height = "500px"))
+                    column(
+                      5,
+                      # LLR plot
+                      plotOutput(plot_id, width = "500px", height = "600px")
+                    ),
+                    column(
+                      4, offset = 3,
+                      # Bar plot
+                      plotOutput(plot_stack_id, width = "300px", height = "500px"),
+                      
+                      # Download buttons stacked vertically
+                      tags$div(
+                        style = "margin-top: 40px; text-align: left;",
+                        downloadButton(download_llr_png_id,   "Download LLR (PNG)"),
+                        tags$br(),
+                        downloadButton(download_bar_svg_id,   "Download bar plot (SVG)"),
+                        tags$br(),
+                        downloadButton(download_both_pdf_id,  "Download both (PDF)"),
+                        tags$br(),
+                        downloadButton(download_csv_id,       "Download all variants with LLRs (CSV)")
+                      )
+                    )
                   ),
                   tableOutput(table_id)
                 )
@@ -385,7 +509,7 @@ server <- function(input, output, session) {
               "No LLR plots available"
             })
           }
-          removeModal() 
+          removeModal()
         } else {
           removeModal() # In case wait modal is still visible
           showModal(modalDialog(
