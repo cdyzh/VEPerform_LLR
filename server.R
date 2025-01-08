@@ -111,414 +111,419 @@ server <- function(input, output, session) {
       
       # After confirmation from the modal
       observeEvent(input$confirm_selection, {
-        
-        # walktag - please wait modal
-        showModal(modalDialog(
-          title = "Please wait",
-          "Generating plots...",
-          footer = NULL,
-          easyClose = FALSE
-        ))
-        
-        selected_rows <- input$variant_table_rows_selected
-        gene_s <- input$Main_gene
-        prcfiltered <- prcdata() %>%
-          filter(base__gene == gene_s)
-        
-        if (!is.null(prcfiltered) && length(selected_rows) > 0) {
-          # Update the selected variants based on the user's choice
-          selected_df <- prcfiltered[selected_rows, ]
-          selected_variants(selected_df)
+        # Wrap everything in a withProgress block
+        withProgress(message = "Generating plots...", value = 0, {
           
-          # Check that there is at least one P/LP and one B/LB - walktag
-          if (!(any(selected_df$clinvar == "P/LP") && any(selected_df$clinvar == "B/LB"))) {
-            removeModal() # remove "Please wait" modal if it's open
+          # Keep the existing “Please wait” modal
+          showModal(modalDialog(
+            title = "Please wait",
+            "Generating plots...",
+            footer = NULL,
+            easyClose = FALSE
+          ))
+          
+          # Step 1: Select rows
+          #incProgress(0.1, detail = "Selecting rows")
+          selected_rows <- input$variant_table_rows_selected
+          gene_s <- input$Main_gene
+          prcfiltered <- prcdata() %>%
+            filter(base__gene == gene_s)
+          
+          if (!is.null(prcfiltered) && length(selected_rows) > 0) {
+            # Step 2: Prepare selected data
+            #incProgress(0.3, detail = "Preparing selected data")
+            selected_df <- prcfiltered[selected_rows, ]
+            selected_variants(selected_df)
+            
+            # Check that there is at least one P/LP and one B/LB - walktag
+            if (!(any(selected_df$clinvar == "P/LP") && any(selected_df$clinvar == "B/LB"))) {
+              removeModal() # remove "Please wait" modal if it's open
+              showModal(modalDialog(
+                title = "Error",
+                "You must select at least one P/LP and one B/LB variant.",
+                easyClose = TRUE,
+                footer = modalButton("Close")
+              ))
+              return()
+            }
+            
+            gene_s <- input$Main_gene
+            exclude_common_variants <- input$Main_common_variant_filter
+            selected_scores <- input$Main_scores
+            
+            # Renaming for consistency
+            names(selected_df)[names(selected_df) == "VEP_varity_r"] <- "VARITY"
+            names(selected_df)[names(selected_df) == "VEP_alphamissense__pathogenicity"] <- "AlphaMissense"
+            names(selected_df)[names(selected_df) == "VEP_revel__score"] <- "REVEL"
+            names(selected_df)[names(selected_df) == "gnomad__af"] <- "gnomAD_AF"
+            
+            # Common variant filter
+            if (exclude_common_variants) {
+              selected_df <- selected_df[is.na(selected_df$gnomAD_AF) | selected_df$gnomAD_AF <= 0.005, ]
+            }
+            selected_df <- selected_df[order(selected_df$clinvar), ]
+            
+            # Convert label to T/F
+            selected_df <- selected_df %>% mutate(clinvar = ifelse(clinvar == "P/LP", TRUE, FALSE))
+            
+            # Count # of P and B
+            P_org <- sum(selected_df$clinvar == TRUE & rowSums(!is.na(selected_df[selected_scores])) > 0)
+            B_org <- sum(selected_df$clinvar == FALSE & rowSums(!is.na(selected_df[selected_scores])) > 0)
+            
+            tryCatch({
+              #incProgress(0.5, detail = "Generating PRC plot")
+              yrobj <- yr2(truth = selected_df[["clinvar"]], scores = selected_df[selected_scores], high = rep(TRUE, length(selected_scores)))
+              
+              # Added for threshold calculation - jumptag
+              thresh_ranges <- calculate_thresh_range(yrobj, x = 0.9, balanced = TRUE)
+              
+              # Store thresholds for rendering
+              threshold_data(thresh_ranges)
+              
+              # end threshold
+              
+              plot_data(list(
+                yrobj = yrobj,
+                lty_styles = c("dashed", "solid", "dashed")[1:length(selected_scores)],
+                col_styles = c("purple", "cadetblue2", "orange")[1:length(selected_scores)],
+                gene_s = gene_s,
+                selected_scores = selected_scores,
+                B_org = B_org,
+                P_org = P_org,
+                common_variant_filter = exclude_common_variants,
+                prcfiltered = selected_df  # Save the filtered data for metadata
+              ))
+              output$Main_ErrorText <- renderText("")
+              
+            }, error = function(e) {
+              plot_data(NULL)
+              output$Main_ErrorText <- renderText("Error generating the plot.")
+            })
+            
+            output$Main_PRCPlot <- renderPlot({
+              plot_info <- plot_data()
+              if (!is.null(plot_info)) {
+                tryCatch({
+                  draw.prc(plot_info$yrobj, lty = plot_info$lty_styles, col = plot_info$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", ")))
+                  abline(h = 90, lty = "dashed")
+                  legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org), paste("# of Benign and Likely Benign:", plot_info$B_org)), pch = 15, bty = "n")
+                }, error = function(e) {
+                  showModal(modalDialog(
+                    title = 'Error',
+                    'Not enough data - must have at least one pathogenic and benign. Try selecting less VEPs or unselecting the common variant filter.
+                  You can also add your own annotations (see Advanced Tab or download VUS).',
+                    easyClose = TRUE,
+                    footer = NULL
+                  ))
+                })
+              }
+            }, width = 600, height = 600, res = 72)
+            
+            # Render the threshold table - jumptag
+            output$thresholdTableUI <- renderUI({
+              req(threshold_data())
+              
+              tagList(
+                h5("Threshold at 90% Balanced Precision"),  # Add the title only if the table exists
+                tableOutput("thresholdTable")  
+              )
+            })
+            
+            output$thresholdTable <- renderTable({
+              req(threshold_data())
+              
+              df <- threshold_data()
+              
+              # Round numeric columns to 3 decimals if numeric
+              df <- as.data.frame(lapply(df, function(x) {
+                if (is.numeric(x)) {
+                  format(round(x, 3), nsmall = 3)
+                } else {
+                  x
+                }
+              }))
+              df
+            }, rownames = FALSE)
+            
+            # LLR Plot - walktag
+            llr_tabs <- list()
+            llr_scores <- intersect(selected_scores, c("VARITY", "REVEL", "AlphaMissense"))
+            
+            incProgress(0.5, detail = "Reading full LLR data (this might take a while)")
+            
+            # Retrieve filtered full data
+            full_filtered <- full_data()
+
+            # Renaming for consistency - walktag
+            names(full_filtered)[names(full_filtered) == "VEP_varity_r"] <- "VARITY"
+            names(full_filtered)[names(full_filtered) == "VEP_alphamissense__pathogenicity"] <- "AlphaMissense"
+            names(full_filtered)[names(full_filtered) == "VEP_revel__score"] <- "REVEL"
+            names(full_filtered)[names(full_filtered) == "gnomad__af"] <- "gnomAD_AF"
+            
+            for (score_idx in seq_along(llr_scores)) {
+              score <- llr_scores[score_idx]
+              incProgress(0.5+0.5/length(llr_scores), detail = paste("Generating LLR plot for:", score))
+              
+              posScores <- na.omit(setNames(
+                selected_df[selected_df$clinvar == TRUE, score],
+                selected_df[selected_df$clinvar == TRUE, "base__achange"]
+              ))
+              negScores <- na.omit(setNames(
+                selected_df[selected_df$clinvar == FALSE, score],
+                selected_df[selected_df$clinvar == FALSE, "base__achange"]
+              ))
+              
+              if (length(posScores) > 0 & length(negScores) > 0) {
+                llrObj <- buildLLR.kernel(posScores, negScores)
+                
+                full_filtered_copy <- full_filtered
+                full_filtered_copy$llr <- llrObj$llr(full_filtered_copy[[score]]) # full_filtered_copy has llr values
+                
+                # Define breakpoints and labels for the categories
+                breaks <- c(-Inf, -1.27, -0.32, 0.32, 0.64, 1.27, 2.54, Inf)
+                labels <- c(
+                  "benign_strong",   # (-Inf, -1.27]
+                  "benign_support",  # (-1.27, -0.32]
+                  "none",            # (-0.32, 0.32]
+                  "patho_support",   # (0.32, 0.64]
+                  "patho_moderate",  # (0.64, 1.27]
+                  "patho_strong",    # (1.27, 2.54]
+                  "patho_vstrong"    # (2.54, Inf)
+                )
+                
+                # Categorize llr based on the defined bins
+                full_filtered_copy$category <- cut(full_filtered_copy$llr, breaks=breaks, labels=labels, include.lowest=TRUE)
+                
+                full_filtered_copy <- full_filtered_copy %>% filter(!is.na(category)) # filter NA - due to score and llr being NA
+                
+                # Define thresholds and search range for crossings
+                llrTs <- llrThresholds(optiLLR(0.1))
+                x_range <- range(c(posScores, negScores))
+                
+                # Find where the LLR function crosses the thresholds
+                crossings_df <- findLLRcrossings(llrObj$llr, llrTs, x_range)
+                
+                # Create the stacked bar plot of clinvar vs category
+                # Assign colors as requested:
+                # dark blue for benign_strong, red for patho_vstrong, grey for none
+                # other categories lighter shades in between
+                category_colors <- c(
+                  "benign_strong"   = "darkblue",
+                  "benign_support"  = "lightblue",
+                  "none"            = "grey",
+                  "patho_support"   = "#FFC0CB",   # light pink
+                  "patho_moderate"  = "#FF9999",   # medium pink
+                  "patho_strong"    = "#FF6666",   # darker pink
+                  "patho_vstrong"   = "red"
+                )
+                
+                plot_stack_id <- paste0("Main_Stacked_", score)
+                
+                # Preserve current iteration's variables, or else it would be same plot
+                local({
+                  # Make local copies of the variables to avoid referencing loop variables
+                  score_copy <- score
+                  posScores_copy <- posScores
+                  negScores_copy <- negScores
+                  llrObj_copy <- llrObj
+                  full_filtered_copy_local <- full_filtered_copy
+                  crossings_df_copy <- crossings_df
+                  
+                  plot_id <- paste0("Main_LLRPlot_", score_copy)
+                  table_id <- paste0("Main_LLRCrossingsTable_", score_copy)
+                  
+                  # -----------------------------
+                  # 1) DEFINE DOWNLOAD BUTTON IDS
+                  # -----------------------------
+                  download_llr_png_id <- paste0("download_", score_copy, "_llr_png")
+                  download_bar_svg_id <- paste0("download_", score_copy, "_bar_svg")
+                  download_both_pdf_id <- paste0("download_", score_copy, "_both_pdf")
+                  download_csv_id      <- paste0("download_", score_copy, "_csv")
+                  
+                  output[[plot_id]] <- renderPlot({
+                    tryCatch({
+                      drawDensityLLR_fixedRange(
+                        full_filtered_copy_local[[score_copy]], 
+                        llrObj_copy$llr, 
+                        llrObj_copy$posDens, 
+                        llrObj_copy$negDens, 
+                        posScores_copy, 
+                        negScores_copy
+                      )
+                    }, error = function(e) {
+                      showModal(modalDialog(
+                        title = 'Error',
+                        'Not enough data',
+                        easyClose = TRUE,
+                        footer = NULL
+                      ))
+                    })
+                  }, width = 500, height = 600, res = 72)
+                  
+                  # Render the stacked bar chart
+                  output[[plot_stack_id]] <- renderPlot({
+                    # Make sure we have factor ordering if needed
+                    full_filtered_copy_local$clinvar <- factor(full_filtered_copy_local$clinvar, 
+                                                               levels = c("P/LP", "B/LB", "VUS", "Conflicting"))
+                    ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
+                      geom_bar(position=position_stack(reverse=TRUE)) + # reverse to put pathogenic at top like the LLR
+                      scale_fill_manual(values=category_colors) +
+                      theme_minimal() +
+                      labs(x="ClinVar Category", y="Count", fill="LLR Category") +
+                      theme(axis.text.x = element_text(angle=45, hjust=1))
+                  }, width = 300, height = 500, res = 72)
+                  
+                  # Render the table of LLR threshold crossings
+                  output[[table_id]] <- renderTable({
+                    crossings_df_copy
+                  })
+                  
+                  # -----------------------------------
+                  # 3) DEFINE DOWNLOAD HANDLERS (NEW)
+                  # -----------------------------------
+                  
+                  # 3a) Download LLR (PNG)
+                  output[[download_llr_png_id]] <- downloadHandler(
+                    filename = function() { paste0(score_copy, "_LLRPlot.png") },
+                    content = function(file) {
+                      # Use a PNG device and re-draw the same LLR plot
+                      png(file, width = 500, height = 600, res = 72)
+                      drawDensityLLR_fixedRange(
+                        full_filtered_copy_local[[score_copy]],
+                        llrObj_copy$llr,
+                        llrObj_copy$posDens,
+                        llrObj_copy$negDens,
+                        posScores_copy,
+                        negScores_copy
+                      )
+                      dev.off()
+                    }
+                  )
+                  
+                  # 3b) Download bar plot (SVG)
+                  output[[download_bar_svg_id]] <- downloadHandler(
+                    filename = function() {
+                      paste0(score_copy, "_BarPlot.svg")
+                    },
+                    content = function(file) {
+                      # Open the SVG device
+                      svg(file, width = 5, height = 5)
+                      
+                      # Construct the ggplot as usual
+                      p <- ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
+                        geom_bar(position=position_stack(reverse=TRUE)) +
+                        scale_fill_manual(values=category_colors) +
+                        theme_minimal() +
+                        labs(x="ClinVar Category", y="Count", fill="LLR Category") +
+                        theme(axis.text.x = element_text(angle=45, hjust=1))
+                      
+                      # Print the ggplot to render onto the SVG device
+                      print(p)
+                      
+                      # Close the device
+                      dev.off()
+                    }
+                  )
+                  
+                  # 3c) Download both (PDF)
+                  output[[download_both_pdf_id]] <- downloadHandler(
+                    filename = function() { paste0(score_copy, "_LLR_and_Bar.pdf") },
+                    content = function(file) {
+                      # Create a 2-page PDF: first page = LLR plot, second page = bar plot
+                      pdf(file, width = 6, height = 6)
+                      
+                      # Page 1: LLR
+                      drawDensityLLR_fixedRange(
+                        full_filtered_copy_local[[score_copy]],
+                        llrObj_copy$llr,
+                        llrObj_copy$posDens,
+                        llrObj_copy$negDens,
+                        posScores_copy,
+                        negScores_copy
+                      )
+                      
+                      # Page 2: bar plot
+                      plot.new()  
+                      p <- ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
+                        geom_bar(position=position_stack(reverse=TRUE)) +
+                        scale_fill_manual(values=category_colors) +
+                        theme_minimal() +
+                        labs(x="ClinVar Category", y="Count", fill="LLR Category") +
+                        theme(axis.text.x = element_text(angle=45, hjust=1))
+                      print(p)
+                      
+                      dev.off()
+                    }
+                  )
+                  
+                  # 3d) Download CSV of variants w/ LLR + category
+                  output[[download_csv_id]] <- downloadHandler(
+                    filename = function() { paste0(score_copy, "_LLR_data.csv") },
+                    content = function(file) {
+                      # This CSV includes all variants (including VUS/conflicting) 
+                      # that remain in full_filtered_copy_local, along with LLR and category
+                      write.csv(full_filtered_copy_local, file, row.names = FALSE)
+                    }
+                  )
+                  
+                  # -----------------------------------
+                  # 4) BUILD THE UI FOR THIS TAB
+                  # -----------------------------------
+                  llr_tabs[[length(llr_tabs) + 1]] <<- tabPanel(
+                    score_copy,
+                    fluidRow(
+                      column(
+                        5,
+                        # LLR plot
+                        plotOutput(plot_id, width = "500px", height = "600px")
+                      ),
+                      column(
+                        4, offset = 3,
+                        # Bar plot
+                        plotOutput(plot_stack_id, width = "300px", height = "500px"),
+                        
+                        # Download buttons stacked vertically
+                        tags$div(
+                          style = "margin-top: 40px; text-align: left;",
+                          downloadButton(download_llr_png_id,   "Download LLR (PNG)"),
+                          tags$br(),
+                          downloadButton(download_bar_svg_id,   "Download bar plot (SVG)"),
+                          tags$br(),
+                          downloadButton(download_both_pdf_id,  "Download both (PDF)"),
+                          tags$br(),
+                          downloadButton(download_csv_id,       "Download all variants with LLRs (CSV)")
+                        )
+                      )
+                    ),
+                    tableOutput(table_id)
+                  )
+                })
+              }
+            }
+            
+            if (length(llr_tabs) > 0) {
+              output$Main_LLRTabs <- renderUI({
+                do.call(tabsetPanel, c(id="llr_tabs", llr_tabs))
+              })
+            } else {
+              output$Main_LLRTabs <- renderUI({
+                "No LLR plots available"
+              })
+            }
+            
+            # Final step: completed
+            incProgress(1.0, detail = "Done")
+            removeModal()
+          } else {
+            removeModal() # In case wait modal is still visible
             showModal(modalDialog(
               title = "Error",
-              "You must select at least one P/LP and one B/LB variant.",
+              "Please select at least two variants.",
               easyClose = TRUE,
               footer = modalButton("Close")
             ))
-            return()
           }
-          
-          gene_s <- input$Main_gene
-          exclude_common_variants <- input$Main_common_variant_filter
-          selected_scores <- input$Main_scores
-          
-          # Renaming for consistency
-          names(selected_df)[names(selected_df) == "VEP_varity_r"] <- "VARITY"
-          names(selected_df)[names(selected_df) == "VEP_alphamissense__pathogenicity"] <- "AlphaMissense"
-          names(selected_df)[names(selected_df) == "VEP_revel__score"] <- "REVEL"
-          names(selected_df)[names(selected_df) == "gnomad__af"] <- "gnomAD_AF"
-          
-          # Common variant filter
-          if (exclude_common_variants) {
-            selected_df <- selected_df[is.na(selected_df$gnomAD_AF) | selected_df$gnomAD_AF <= 0.005, ]
-          }
-          
-          selected_df <- selected_df[order(selected_df$clinvar), ]
-          
-          # Convert label to T/F
-          selected_df <- selected_df %>% mutate(clinvar = ifelse(clinvar == "P/LP", TRUE, FALSE))
-          
-          # Count # of P and B
-          P_org <- sum(selected_df$clinvar == TRUE & rowSums(!is.na(selected_df[selected_scores])) > 0)
-          B_org <- sum(selected_df$clinvar == FALSE & rowSums(!is.na(selected_df[selected_scores])) > 0)
-          
-          tryCatch({
-            yrobj <- yr2(truth = selected_df[["clinvar"]], scores = selected_df[selected_scores], high = rep(TRUE, length(selected_scores)))
-            
-            # Added for threshold calculation - jumptag
-            thresh_ranges <- calculate_thresh_range(yrobj, x = 0.9, balanced = TRUE)
-            
-            # Store thresholds for rendering
-            threshold_data(thresh_ranges)
-            
-            # end threshold
-            
-            plot_data(list(
-              yrobj = yrobj,
-              lty_styles = c("dashed", "solid", "dashed")[1:length(selected_scores)],
-              col_styles = c("purple", "cadetblue2", "orange")[1:length(selected_scores)],
-              gene_s = gene_s,
-              selected_scores = selected_scores,
-              B_org = B_org,
-              P_org = P_org,
-              common_variant_filter = exclude_common_variants,
-              prcfiltered = selected_df  # Save the filtered data for metadata
-            ))
-            output$Main_ErrorText <- renderText("")
-            
-          }, error = function(e) {
-            plot_data(NULL)
-            output$Main_ErrorText <- renderText("Error generating the plot.")
-          })
-          
-          output$Main_PRCPlot <- renderPlot({
-            plot_info <- plot_data()
-            if (!is.null(plot_info)) {
-              tryCatch({
-                draw.prc(plot_info$yrobj, lty = plot_info$lty_styles, col = plot_info$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", ")))
-                abline(h = 90, lty = "dashed")
-                legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org), paste("# of Benign and Likely Benign:", plot_info$B_org)), pch = 15, bty = "n")
-              }, error = function(e) {
-                showModal(modalDialog(
-                  title = 'Error',
-                  'Not enough data - must have at least one pathogenic and benign. Try selecting less VEPs or unselecting the common variant filter.
-                  You can also add your own annotations (see Advanced Tab or download VUS).',
-                  easyClose = TRUE,
-                  footer = NULL
-                ))
-              })
-            }
-          }, width = 600, height = 600, res = 72)
-          
-          # Render the threshold table - jumptag
-          output$thresholdTableUI <- renderUI({
-            req(threshold_data())
-            
-            tagList(
-              h5("Threshold at 90% Balanced Precision"),  # Add the title only if the table exists
-              tableOutput("thresholdTable")  
-            )
-          })
-          
-          output$thresholdTable <- renderTable({
-            req(threshold_data())
-            
-            df <- threshold_data()
-            
-            # Round numeric columns to 3 decimals if numeric
-            df <- as.data.frame(lapply(df, function(x) {
-              if (is.numeric(x)) {
-                format(round(x, 3), nsmall = 3)
-              } else {
-                x
-              }
-            }))
-            df
-          }, rownames = FALSE)
-          
-          
-          
-          # LLR Plot - walktag
-          
-          llr_tabs <- list()
-          llr_scores <- intersect(selected_scores, c("VARITY", "REVEL", "AlphaMissense"))
-          
-          # Retrieve filtered full data
-          full_filtered <- full_data()
-          
-          # Renaming for consistency - walktag
-          names(full_filtered)[names(full_filtered) == "VEP_varity_r"] <- "VARITY"
-          names(full_filtered)[names(full_filtered) == "VEP_alphamissense__pathogenicity"] <- "AlphaMissense"
-          names(full_filtered)[names(full_filtered) == "VEP_revel__score"] <- "REVEL"
-          names(full_filtered)[names(full_filtered) == "gnomad__af"] <- "gnomAD_AF"
-          
-          for (score in llr_scores) {
-            posScores <- na.omit(setNames(
-              selected_df[selected_df$clinvar == TRUE, score],
-              selected_df[selected_df$clinvar == TRUE, "base__achange"]
-            ))
-            negScores <- na.omit(setNames(
-              selected_df[selected_df$clinvar == FALSE, score],
-              selected_df[selected_df$clinvar == FALSE, "base__achange"]
-            ))
-            
-            if (length(posScores) > 0 & length(negScores) > 0) {
-              llrObj <- buildLLR.kernel(posScores, negScores)
-              
-              full_filtered_copy <- full_filtered
-              full_filtered_copy$llr <- llrObj$llr(full_filtered_copy[[score]]) # full_filtered_copy has llr values
-              
-              # Define breakpoints and labels for the categories
-              breaks <- c(-Inf, -1.27, -0.32, 0.32, 0.64, 1.27, 2.54, Inf)
-              labels <- c(
-                "benign_strong",   # (-Inf, -1.27]
-                "benign_support",  # (-1.27, -0.32]
-                "none",            # (-0.32, 0.32]
-                "patho_support",   # (0.32, 0.64]
-                "patho_moderate",  # (0.64, 1.27]
-                "patho_strong",    # (1.27, 2.54]
-                "patho_vstrong"    # (2.54, Inf)
-              )
-              
-              # Categorize llr based on the defined bins
-              full_filtered_copy$category <- cut(full_filtered_copy$llr, breaks=breaks, labels=labels, include.lowest=TRUE)
-              
-              full_filtered_copy <- full_filtered_copy %>% filter(!is.na(category)) # filter NA - due to score and llr being NA
-              
-              # Define thresholds and search range for crossings
-              llrTs <- llrThresholds(optiLLR(0.1))
-              x_range <- range(c(posScores, negScores))
-              
-              # Find where the LLR function crosses the thresholds
-              crossings_df <- findLLRcrossings(llrObj$llr, llrTs, x_range)
-              
-              # Create the stacked bar plot of clinvar vs category
-              # Assign colors as requested:
-              # dark blue for benign_strong, red for patho_vstrong, grey for none
-              # other categories lighter shades in between
-              category_colors <- c(
-                "benign_strong"   = "darkblue",
-                "benign_support"  = "lightblue",
-                "none"            = "grey",
-                "patho_support"   = "#FFC0CB",   # light pink
-                "patho_moderate"  = "#FF9999",   # medium pink
-                "patho_strong"    = "#FF6666",   # darker pink
-                "patho_vstrong"   = "red"
-              )
-              
-              plot_stack_id <- paste0("Main_Stacked_", score)
-              
-              # Preserve current iteration's variables, or else it would be same plot
-              local({
-                # Make local copies of the variables to avoid referencing loop variables
-                score_copy <- score
-                posScores_copy <- posScores
-                negScores_copy <- negScores
-                llrObj_copy <- llrObj
-                full_filtered_copy_local <- full_filtered_copy
-                crossings_df_copy <- crossings_df
-                
-                plot_id <- paste0("Main_LLRPlot_", score_copy)
-                table_id <- paste0("Main_LLRCrossingsTable_", score_copy)
-                
-                # -----------------------------
-                # 1) DEFINE DOWNLOAD BUTTON IDS
-                # -----------------------------
-                download_llr_png_id <- paste0("download_", score_copy, "_llr_png")
-                download_bar_svg_id <- paste0("download_", score_copy, "_bar_svg")
-                download_both_pdf_id <- paste0("download_", score_copy, "_both_pdf")
-                download_csv_id      <- paste0("download_", score_copy, "_csv")
-                
-                output[[plot_id]] <- renderPlot({
-                  tryCatch({
-                    drawDensityLLR_fixedRange(
-                      full_filtered_copy_local[[score_copy]], 
-                      llrObj_copy$llr, 
-                      llrObj_copy$posDens, 
-                      llrObj_copy$negDens, 
-                      posScores_copy, 
-                      negScores_copy
-                    )
-                  }, error = function(e) {
-                    showModal(modalDialog(
-                      title = 'Error',
-                      'Not enough data',
-                      easyClose = TRUE,
-                      footer = NULL
-                    ))
-                  })
-                }, width = 500, height = 600, res = 72)
-                
-                # Render the stacked bar chart
-                output[[plot_stack_id]] <- renderPlot({
-                  # Make sure we have factor ordering if needed
-                  full_filtered_copy_local$clinvar <- factor(full_filtered_copy_local$clinvar, 
-                                                             levels = c("P/LP", "B/LB", "VUS", "Conflicting"))
-                  ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
-                    geom_bar(position=position_stack(reverse=TRUE)) + # reverse to put pathogenic at top like the LLR
-                    scale_fill_manual(values=category_colors) +
-                    theme_minimal() +
-                    labs(x="ClinVar Category", y="Count", fill="LLR Category") +
-                    theme(axis.text.x = element_text(angle=45, hjust=1))
-                }, width = 300, height = 500, res = 72)
-                
-                # Render the table of LLR threshold crossings
-                output[[table_id]] <- renderTable({
-                  crossings_df_copy
-                })
-                
-                # -----------------------------------
-                # 3) DEFINE DOWNLOAD HANDLERS (NEW)
-                # -----------------------------------
-                
-                # 3a) Download LLR (PNG)
-                output[[download_llr_png_id]] <- downloadHandler(
-                  filename = function() { paste0(score_copy, "_LLRPlot.png") },
-                  content = function(file) {
-                    # Use a PNG device and re-draw the same LLR plot
-                    png(file, width = 500, height = 600, res = 72)
-                    drawDensityLLR_fixedRange(
-                      full_filtered_copy_local[[score_copy]],
-                      llrObj_copy$llr,
-                      llrObj_copy$posDens,
-                      llrObj_copy$negDens,
-                      posScores_copy,
-                      negScores_copy
-                    )
-                    dev.off()
-                  }
-                )
-                
-                # 3b) Download bar plot (PNG)
-                output[[download_bar_svg_id]] <- downloadHandler(
-                  filename = function() {
-                    paste0(score_copy, "_BarPlot.svg")
-                  },
-                  content = function(file) {
-                    # Open the SVG device
-                    svg(file, width = 5, height = 5)
-                    
-                    # Construct the ggplot as usual
-                    p <- ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
-                      geom_bar(position=position_stack(reverse=TRUE)) +
-                      scale_fill_manual(values=category_colors) +
-                      theme_minimal() +
-                      labs(x="ClinVar Category", y="Count", fill="LLR Category") +
-                      theme(axis.text.x = element_text(angle=45, hjust=1))
-                    
-                    # Print the ggplot to render onto the SVG device
-                    print(p)
-                    
-                    # Close the device
-                    dev.off()
-                  }
-                )
-                
-                # 3c) Download both (PDF)
-                output[[download_both_pdf_id]] <- downloadHandler(
-                  filename = function() { paste0(score_copy, "_LLR_and_Bar.pdf") },
-                  content = function(file) {
-                    # Create a 2-page PDF: first page = LLR plot, second page = bar plot
-                    pdf(file, width = 6, height = 6)
-                    
-                    # Page 1: LLR
-                    drawDensityLLR_fixedRange(
-                      full_filtered_copy_local[[score_copy]],
-                      llrObj_copy$llr,
-                      llrObj_copy$posDens,
-                      llrObj_copy$negDens,
-                      posScores_copy,
-                      negScores_copy
-                    )
-                    
-                    # Page 2: bar plot
-                    # 1) Create the ggplot object
-                    p <- ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
-                      geom_bar(position=position_stack(reverse=TRUE)) +
-                      scale_fill_manual(values=category_colors) +
-                      theme_minimal() +
-                      labs(x="ClinVar Category", y="Count", fill="LLR Category") +
-                      theme(axis.text.x = element_text(angle=45, hjust=1))
-                    
-                    # 2) (Optional) start a new page
-                    # grid.newpage() or plot.new() -- only if you want them on separate pages
-                    plot.new()  
-                    
-                    # 3) Print the ggplot to render it on this new page
-                    print(p)
-                    
-                    dev.off()
-                  }
-                )
-                
-                # 3d) Download CSV of variants w/ LLR + category
-                output[[download_csv_id]] <- downloadHandler(
-                  filename = function() { paste0(score_copy, "_LLR_data.csv") },
-                  content = function(file) {
-                    # This CSV includes all variants (including VUS/conflicting) 
-                    # that remain in full_filtered_copy_local, along with LLR and category
-                    write.csv(full_filtered_copy_local, file, row.names = FALSE)
-                  }
-                )
-                
-                # -----------------------------------
-                # 4) BUILD THE UI FOR THIS TAB
-                # -----------------------------------
-                llr_tabs[[length(llr_tabs) + 1]] <<- tabPanel(
-                  score_copy,
-                  fluidRow(
-                    column(
-                      5,
-                      # LLR plot
-                      plotOutput(plot_id, width = "500px", height = "600px")
-                    ),
-                    column(
-                      4, offset = 3,
-                      # Bar plot
-                      plotOutput(plot_stack_id, width = "300px", height = "500px"),
-                      
-                      # Download buttons stacked vertically
-                      tags$div(
-                        style = "margin-top: 40px; text-align: left;",
-                        downloadButton(download_llr_png_id,   "Download LLR (PNG)"),
-                        tags$br(),
-                        downloadButton(download_bar_svg_id,   "Download bar plot (SVG)"),
-                        tags$br(),
-                        downloadButton(download_both_pdf_id,  "Download both (PDF)"),
-                        tags$br(),
-                        downloadButton(download_csv_id,       "Download all variants with LLRs (CSV)")
-                      )
-                    )
-                  ),
-                  tableOutput(table_id)
-                )
-              })
-            }
-          }
-          
-          if (length(llr_tabs) > 0) {
-            output$Main_LLRTabs <- renderUI({
-              do.call(tabsetPanel, c(id="llr_tabs", llr_tabs))
-            })
-          } else {
-            output$Main_LLRTabs <- renderUI({
-              "No LLR plots available"
-            })
-          }
-          removeModal()
-        } else {
-          removeModal() # In case wait modal is still visible
-          showModal(modalDialog(
-            title = "Error",
-            "Please select at least two variants.",
-            easyClose = TRUE,
-            footer = modalButton("Close")
-          ))
-        }
+        })
       })
       
       output$Main_download_buttons <- renderUI({
@@ -637,7 +642,6 @@ server <- function(input, output, session) {
           footer = modalButton("Close")
         ))
       })
-      
       
     } else {
       # Logic for Advanced
