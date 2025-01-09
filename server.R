@@ -514,6 +514,17 @@ server <- function(input, output, session) {
             # Final step: completed
             incProgress(1.0, detail = "Done")
             removeModal()
+            
+            if (P_org < 11 || B_org < 11) {
+              showModal(modalDialog(
+                title = "Warning",
+                "There are fewer than 11 Pathogenic/Likely Pathogenic or Benign/Likely Benign variants. 
+           Please use extra caution when interpreting these plots.",
+                easyClose = TRUE,
+                footer = modalButton("Close")
+              ))
+            }
+            
           } else {
             removeModal() # In case wait modal is still visible
             showModal(modalDialog(
@@ -1043,6 +1054,17 @@ server <- function(input, output, session) {
             })
           }
         }, width = 600, height = 600, res = 72)
+        
+        if (P_org < 11 || B_org < 11) {
+          showModal(modalDialog(
+            title = "Warning",
+            "There are fewer than 11 Pathogenic/Likely Pathogenic or Benign/Likely Benign variants. 
+           Please use extra caution when interpreting these plots.",
+            easyClose = TRUE,
+            footer = modalButton("Close")
+          ))
+        }
+        
       })
       
       # Download logic 
