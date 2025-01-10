@@ -14,7 +14,6 @@ library(DT)
 library(ggplot2)
 library(shinycssloaders)
 
-
 server <- function(input, output, session) {
   plot_data <- reactiveVal(NULL)
   selected_variants <- reactiveVal(NULL)  # Store user-selected variants
@@ -38,23 +37,37 @@ server <- function(input, output, session) {
         }
       })
       
-      # Update scores - if a VEP is all NA, checkbox will not show up
+      # Update scores - show only if a predictor has at least 1 P/LP and 1 B/LB
       observe({
         req(input$Main_gene)
         df <- prcdata()
         gene_data <- df %>% filter(base__gene == input$Main_gene)
-        
+      
         available_scores <- c()
-        if (any(!is.na(gene_data$varity_r))) {
-          available_scores <- c(available_scores, "VARITY")
-        }
-        if (any(!is.na(gene_data$alphamissense__pathogenicity))) {
-          available_scores <- c(available_scores, "AlphaMissense")
-        }
-        if (any(!is.na(gene_data$revel__score))) {
-          available_scores <- c(available_scores, "REVEL")
+        
+        # Check each score for the required condition
+        if (any(!is.na(gene_data$VEP_varity_r))) {
+          if (any(gene_data$clinvar == "P/LP" & !is.na(gene_data$VEP_varity_r)) &&
+              any(gene_data$clinvar == "B/LB" & !is.na(gene_data$VEP_varity_r))) {
+            available_scores <- c(available_scores, "VARITY")
+          }
         }
         
+        if (any(!is.na(gene_data$VEP_alphamissense__pathogenicity))) {
+          if (any(gene_data$clinvar == "P/LP" & !is.na(gene_data$VEP_alphamissense__pathogenicity)) && 
+              any(gene_data$clinvar == "B/LB" & !is.na(gene_data$VEP_alphamissense__pathogenicity))) {
+            available_scores <- c(available_scores, "AlphaMissense")
+          }
+        }
+        
+        if (any(!is.na(gene_data$VEP_revel__score))) {
+          if (any(gene_data$clinvar == "P/LP" & !is.na(gene_data$VEP_revel__score)) && 
+              any(gene_data$clinvar == "B/LB" & !is.na(gene_data$VEP_revel__score))) {
+            available_scores <- c(available_scores, "REVEL")
+          }
+        }
+        
+        # Update the checkbox group input with valid predictors
         updateCheckboxGroupInput(session, "Main_scores", choices = available_scores, selected = available_scores)
       })
       
@@ -224,7 +237,7 @@ server <- function(input, output, session) {
               req(threshold_data())
               
               tagList(
-                h5("Threshold at 90% Balanced Precision"),  # Add the title only if the table exists
+                h5("VEP threshold to achieve 90% Balanced Precision"),  # Add the title only if the table exists
                 tableOutput("thresholdTable")  
               )
             })
@@ -308,7 +321,7 @@ server <- function(input, output, session) {
                 # dark blue for benign_strong, red for patho_vstrong, grey for none
                 # other categories lighter shades in between
                 category_colors <- c(
-                  "benign_strong"   = "darkblue",
+                  "benign_strong"   = "dodgerblue",
                   "benign_support"  = "lightblue",
                   "none"            = "grey",
                   "patho_support"   = "#FFC0CB",   # light pink
@@ -369,7 +382,7 @@ server <- function(input, output, session) {
                       geom_bar(position=position_stack(reverse=TRUE)) + # reverse to put pathogenic at top like the LLR
                       scale_fill_manual(values=category_colors) +
                       theme_minimal() +
-                      labs(x="ClinVar Category", y="Count", fill="LLR Category") +
+                      labs(x="ClinVar Category", y="Variant Count", fill="LLR-Derived Evidence Category") +
                       theme(axis.text.x = element_text(angle=45, hjust=1))
                   }, width = 300, height = 500, res = 72)
                   
@@ -414,7 +427,7 @@ server <- function(input, output, session) {
                         geom_bar(position=position_stack(reverse=TRUE)) +
                         scale_fill_manual(values=category_colors) +
                         theme_minimal() +
-                        labs(x="ClinVar Category", y="Count", fill="LLR Category") +
+                        labs(x="ClinVar Category", y="Variant Count", fill="LLR-Derived Evidence Category") +
                         theme(axis.text.x = element_text(angle=45, hjust=1))
                       
                       # Print the ggplot to render onto the SVG device
