@@ -176,12 +176,15 @@ server <- function(input, output, session) {
             }
             selected_df <- selected_df[order(selected_df$clinvar), ]
             
+            # Filter out any rows with an NA in any `selected_scores`
+            selected_df <- selected_df[rowSums(is.na(selected_df[selected_scores])) == 0, ]
+            
             # Convert label to T/F
             selected_df <- selected_df %>% mutate(clinvar = ifelse(clinvar == "P/LP", TRUE, FALSE))
             
             # Count # of P and B
-            P_org <- sum(selected_df$clinvar == TRUE & rowSums(!is.na(selected_df[selected_scores])) > 0)
-            B_org <- sum(selected_df$clinvar == FALSE & rowSums(!is.na(selected_df[selected_scores])) > 0)
+            P_org <- sum(selected_df$clinvar == TRUE)
+            B_org <- sum(selected_df$clinvar == FALSE)
             
             tryCatch({
               #incProgress(0.5, detail = "Generating PRC plot")
@@ -1002,6 +1005,9 @@ server <- function(input, output, session) {
           mutate(clinvar = ifelse(clinvar == "P/LP", TRUE, ifelse(clinvar == "B/LB", FALSE, NA)))
         
         prcfiltered <- prcfiltered[!is.na(prcfiltered$clinvar), ]
+        
+        # Filter out any rows with an NA in any `selected_scores`
+        prcfiltered <- prcfiltered[rowSums(is.na(prcfiltered[selected_scores])) == 0, ]
         
         P_org <- sum(prcfiltered$clinvar == TRUE)
         B_org <- sum(prcfiltered$clinvar == FALSE)
