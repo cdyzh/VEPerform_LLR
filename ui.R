@@ -72,7 +72,8 @@ ui <- fluidPage(
                      tabPanel(
                        title = "Precision-Recall Curves (PRC) - VEP Performance",
                        plotOutput("Main_PRCPlot", width = "600px", height = "600px"),
-                       uiOutput("thresholdTableUI") # jumptag
+                       uiOutput("thresholdTableUI"), # jumptag
+                       uiOutput("Main_PRC_Download_Buttons")
                      ),
                      
                      # Tab for the LLR plot

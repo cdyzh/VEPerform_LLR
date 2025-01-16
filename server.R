@@ -553,15 +553,15 @@ server <- function(input, output, session) {
         })
       })
       
-      output$Main_download_buttons <- renderUI({
-        req(plot_data())  # Only show if plot_data has been generated
+      output$Main_PRC_Download_Buttons <- renderUI({
+        req(plot_data())  # Ensure the plot data exists before showing buttons
         
-        tagList(
-          actionButton("Main_helpButton", "Plot Explanation", class = "btn-info"),
-          helpText(HTML("<span style='color:black;'><strong>Download Options: </strong></span>")),
+        tags$div(
+          style = "margin-top: 20px;",
+          helpText(HTML("<strong>PRC Plot Download Options:</strong>")),
           downloadButton("Main_downloadPlotPNG", "Download PRC Plot as PNG"),
-          downloadButton("Main_downloadPlotPDF", HTML("Download PRC Plot and <br>Metadata as PDF")), 
-          downloadButton("Main_downloadCSV", HTML("Download Variants Used as <br>CSV")),
+          downloadButton("Main_downloadPlotPDF", "Download PRC Plot and Metadata as PDF"),
+          downloadButton("Main_downloadCSV", "Download Variants Used as CSV"),
           div(
             style = "display: inline-flex; align-items: center;",
             downloadButton("Main_downloadCSV_VUS", HTML("Download CSV with VUS")),
@@ -653,6 +653,213 @@ server <- function(input, output, session) {
           footer = modalButton("Close")
         ))
       }, ignoreInit = TRUE)
+      
+      output$Main_download_buttons <- renderUI({
+        req(plot_data())  # Only show if plot_data has been generated
+        
+        tagList(
+          actionButton("Main_helpButton", "Plot Explanation", class = "btn-info"),
+          helpText(HTML("<span style='color:black;'><strong>Download Options: </strong></span>")),
+          downloadButton("Main_downloadAllPlotsZIP", "Download All Plots (ZIP)"),
+          downloadButton("Main_downloadAllCSVsZIP", "Download All CSVs (ZIP)")
+        )
+      })
+      
+      ### New Download Handlers for ZIP Files ###
+      
+      ### Placeholder ###
+
+      ### --- DOWNLOAD ALL PLOTS AS ZIP ----------------------------------------------
+      output$Main_downloadAllPlotsZIP <- downloadHandler(
+        filename = function() {
+          paste0("AllPlots_", input$Main_gene, ".zip")
+        },
+        content = function(zipfile) {
+          req(plot_data())
+          
+          # 1) Create a temporary folder for saving images
+          tmpdir <- file.path(tempdir(), paste0("plotszip_", Sys.Date()))
+          if (!dir.exists(tmpdir)) dir.create(tmpdir)
+          
+          # 2) PRC Plot as PNG (same as before)
+          plot_info <- plot_data()
+          prc_png_filename <- file.path(tmpdir, paste0("PRC_plot_", plot_info$gene_s, ".png"))
+          png(prc_png_filename, width = 6, height = 6, units = "in", res = 72)
+          draw.prc(plot_info$yrobj,
+                   lty = plot_info$lty_styles,
+                   col = plot_info$col_styles,
+                   lwd = 2,
+                   balanced = TRUE,
+                   main = paste0(plot_info$gene_s, " PRCs for ",
+                                 paste(plot_info$selected_scores, collapse = ", ")))
+          abline(h = 90, lty = "dashed")
+          legend("left",
+                 legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org),
+                            paste("# of Benign and Likely Benign:", plot_info$B_org)),
+                 pch = 15, bty = "n")
+          dev.off()
+          
+          # 3) LLR Plots for each predictor, plus the bar plots as PNG
+          llr_scores <- intersect(plot_info$selected_scores, c("VARITY", "REVEL", "AlphaMissense"))
+          selected_df <- plot_info$prcfiltered      # The data used for PRC
+          full_filtered <- full_data()             # The full data (includes VUS/conflicting)
+          
+          # Rename to match your "score" columns
+          names(full_filtered)[names(full_filtered) == "VEP_varity_r"] <- "VARITY"
+          names(full_filtered)[names(full_filtered) == "VEP_alphamissense__pathogenicity"] <- "AlphaMissense"
+          names(full_filtered)[names(full_filtered) == "VEP_revel__score"] <- "REVEL"
+          names(full_filtered)[names(full_filtered) == "gnomad__af"] <- "gnomAD_AF"
+          
+          # Use the same color scheme as in your original bar plot code
+          category_colors <- c(
+            "benign_strong"   = "dodgerblue",
+            "benign_support"  = "lightblue",
+            "none"            = "grey",
+            "patho_support"   = "#FFC0CB",
+            "patho_moderate"  = "#FF9999",
+            "patho_strong"    = "#FF6666",
+            "patho_vstrong"   = "red"
+          )
+          
+          for (score in llr_scores) {
+            posScores <- na.omit(setNames(
+              selected_df[selected_df$clinvar == TRUE, score],
+              selected_df[selected_df$clinvar == TRUE, "base__achange"]
+            ))
+            negScores <- na.omit(setNames(
+              selected_df[selected_df$clinvar == FALSE, score],
+              selected_df[selected_df$clinvar == FALSE, "base__achange"]
+            ))
+            
+            if (length(posScores) > 0 && length(negScores) > 0) {
+              # Build the LLR object
+              llrObj <- buildLLR.kernel(posScores, negScores)
+              
+              # Assign LLR and categories to full data for bar plot
+              full_copy <- full_filtered
+              full_copy$llr <- llrObj$llr(full_copy[[score]])
+              
+              breaks <- c(-Inf, -1.27, -0.32, 0.32, 0.64, 1.27, 2.54, Inf)
+              labels <- c("benign_strong", "benign_support", "none",
+                          "patho_support", "patho_moderate", "patho_strong", "patho_vstrong")
+              full_copy$category <- cut(full_copy$llr, breaks, labels, include.lowest = TRUE)
+              
+              # --- 3a) LLR Density Plot (PNG) ---
+              llr_png_path <- file.path(tmpdir, paste0("LLR_", score, ".png"))
+              png(llr_png_path, width = 500, height = 600, res = 72)
+              drawDensityLLR_fixedRange(
+                full_copy[[score]],
+                llrObj$llr,
+                llrObj$posDens,
+                llrObj$negDens,
+                posScores,
+                negScores
+              )
+              dev.off()
+              
+              # --- 3b) Bar Plot as PNG (mirror the original bar plot code) ---
+              bar_png_path <- file.path(tmpdir, paste0("Bar_", score, ".png"))
+              png(bar_png_path, width = 300, height = 500, res = 72)
+              
+              # *Exactly* the same factor levels, color scale, and theme as your display code
+              full_copy$clinvar <- factor(full_copy$clinvar,
+                                          levels = c("P/LP", "B/LB", "VUS", "Conflicting"))
+              
+              bar_plot <- ggplot(full_copy, aes(x = clinvar, fill = category)) +
+                geom_bar(position = position_stack(reverse = TRUE)) +
+                scale_fill_manual(values = category_colors) +
+                theme_minimal() +
+                labs(x = "ClinVar Category", y = "Variant Count",
+                     fill = "LLR-Derived Evidence Category") +
+                theme(axis.text.x = element_text(angle = 45, hjust = 1))
+              
+              print(bar_plot)
+              
+              dev.off()
+            }
+          }
+          
+          # 4) Zip all images
+          old_wd <- setwd(tmpdir)
+          on.exit(setwd(old_wd), add = TRUE)
+          zip::zipr(zipfile = zipfile, files = list.files(tmpdir))
+        }
+      )
+      
+      ### --- DOWNLOAD ALL CSVS AS ZIP -----------------------------------------------
+      output$Main_downloadAllCSVsZIP <- downloadHandler(
+        filename = function() {
+          paste0("AllCSVs_", input$Main_gene, ".zip")
+        },
+        content = function(zipfile) {
+          req(plot_data())
+          
+          tmpdir <- file.path(tempdir(), paste0("csvzip_", Sys.Date()))
+          if (!dir.exists(tmpdir)) dir.create(tmpdir)
+          
+          # 1) Main CSV of selected variants
+          selected_df <- selected_variants()
+          main_csv_path <- file.path(tmpdir, paste0("PRC_data_", input$Main_gene, ".csv"))
+          if (!is.null(selected_df)) {
+            write.csv(selected_df, main_csv_path, row.names = FALSE)
+          }
+          
+          # 2) CSV with VUS (full.csv for the chosen gene)
+          df_VUS <- read.csv("full.csv", stringsAsFactors = FALSE)
+          prcfiltered_VUS <- df_VUS %>%
+            filter(base__gene == input$Main_gene) %>%
+            arrange(clinvar)
+          vus_csv_path <- file.path(tmpdir, paste0("PRC_data_VUS_", input$Main_gene, ".csv"))
+          write.csv(prcfiltered_VUS, vus_csv_path, row.names = FALSE)
+          
+          # 3) For each LLR predictor, produce the CSV that includes LLR + category
+          #    This is the same approach as in the LLR tabs
+          plot_info <- plot_data()
+          llr_scores <- intersect(plot_info$selected_scores, c("VARITY", "REVEL", "AlphaMissense"))
+          
+          # The final data used for PRC (to get posScores / negScores)
+          selected_df <- plot_info$prcfiltered  
+          full_filtered <- full_data()
+          names(full_filtered)[names(full_filtered) == "VEP_varity_r"] <- "VARITY"
+          names(full_filtered)[names(full_filtered) == "VEP_alphamissense__pathogenicity"] <- "AlphaMissense"
+          names(full_filtered)[names(full_filtered) == "VEP_revel__score"] <- "REVEL"
+          names(full_filtered)[names(full_filtered) == "gnomad__af"] <- "gnomAD_AF"
+          
+          for (score in llr_scores) {
+            posScores <- na.omit(selected_df[selected_df$clinvar == TRUE, score])
+            negScores <- na.omit(selected_df[selected_df$clinvar == FALSE, score])
+            
+            if (length(posScores) > 0 && length(negScores) > 0) {
+              # Build LLR
+              llrObj <- buildLLR.kernel(
+                setNames(posScores,
+                         selected_df[selected_df$clinvar == TRUE, "base__achange"]),
+                setNames(negScores,
+                         selected_df[selected_df$clinvar == FALSE, "base__achange"])
+              )
+              
+              full_copy <- full_filtered
+              full_copy$llr <- llrObj$llr(full_copy[[score]])
+              
+              breaks <- c(-Inf, -1.27, -0.32, 0.32, 0.64, 1.27, 2.54, Inf)
+              labels <- c("benign_strong", "benign_support", "none",
+                          "patho_support", "patho_moderate", "patho_strong", "patho_vstrong")
+              full_copy$category <- cut(full_copy$llr, breaks = breaks,
+                                        labels = labels, include.lowest = TRUE)
+              
+              # Write out a CSV containing all variants (including VUS/conflicting) with LLR + category
+              llr_csv_path <- file.path(tmpdir, paste0(score, "_LLR_data.csv"))
+              write.csv(full_copy, llr_csv_path, row.names = FALSE)
+            }
+          }
+          
+          # 4) Zip them up
+          old_wd <- setwd(tmpdir)
+          on.exit(setwd(old_wd), add = TRUE)
+          zip::zipr(zipfile = zipfile, files = list.files(tmpdir))
+        }
+      )
+      
       
       # Plot explanation help button
       observeEvent(input$Main_helpButton, {
