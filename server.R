@@ -83,31 +83,60 @@ server <- function(input, output, session) {
         return(df_filtered)
       })
       
-      
-      # Show variant selection display
+      # Variant selection pop-up
       showVariantSelectionModal <- function(df, gene_selected) {
         
-        # Modified dataframe for display
-        gene_display_df <- df %>% filter(base__gene == gene_selected) %>%
-          select(base__gene, base__achange, clinvar, revstat, stars)
+        gene_display_df <- df %>% 
+          dplyr::filter(base__gene == gene_selected) %>%
+          dplyr::select(base__gene, base__achange, clinvar, revstat, stars) %>%
+          dplyr::mutate(is_duplicate = base__achange %in% base__achange[duplicated(base__achange)]) 
         
-        showModal(modalDialog(
-          title = paste("Select Variants for Gene:", gene_selected),
-          tags$p("Would you like to de-select some variants? Click on the variants you do not want to include in the PRC. You can also do this later by downloading the CSV, removing variants yourself, and uploading it back."),
-          DTOutput("variant_table"),
-          footer = tagList(
-            modalButton("Cancel"),
-            actionButton("confirm_selection", "OK")
-          ),
-          easyClose = FALSE
-        ))
+        # Check for duplicates
+        has_duplicates <- any(gene_display_df$is_duplicate)
+        
+        # Sort to place duplicates on top
+        gene_display_df <- gene_display_df %>% dplyr::arrange(desc(is_duplicate))
+        
+        # Build message text if duplicates found
+        duplicate_warning <- if (has_duplicates) {
+          tags$div(
+            style = "background-color: #FFF3CD; border: 1px solid #FFEEBA; padding: 10px; margin-bottom: 10px;",
+            tags$strong("Warning: "),
+            "Some variants (shown at top of this list) are listed multiple times in ClinVar under the same hgvs_pro with different classification. You may want to de-select them."
+          )
+        } else {
+          NULL
+        }
+        
+        # Show one single modal
+        showModal(
+          modalDialog(
+            title = paste("Select Variants for Gene:", gene_selected),
+            # Place the warning at the top if duplicates exist
+            duplicate_warning,
+            tags$p("Would you like to de-select some variants? 
+             (Click on the variants you do not want to include in the PRC...)"),
+            DTOutput("variant_table"),
+            footer = tagList(
+              modalButton("Cancel"),
+              actionButton("confirm_selection", "OK")
+            ),
+            easyClose = FALSE
+          )
+        )
         
         # Render the interactive table
         output$variant_table <- renderDT({
           datatable(
-            gene_display_df, 
-            selection = list(target = "row", selected = 1:nrow(gene_display_df)),  # All rows selected by default
-            options = list(pageLength = 10, scrollX = TRUE)
+            gene_display_df,
+            selection = list(target = "row", selected = 1:nrow(gene_display_df)), 
+            options = list(
+              pageLength = 10,
+              scrollX = TRUE,
+              columnDefs = list(
+                list(targets = 6, visible = FALSE)  # '6' = zero-based index for the 7th column, to hide the is_duplicate column
+              )
+            )
           )
         }, server = TRUE)
       }
@@ -761,7 +790,6 @@ server <- function(input, output, session) {
               bar_png_path <- file.path(tmpdir, paste0("Bar_", score, ".png"))
               png(bar_png_path, width = 300, height = 500, res = 72)
               
-              # *Exactly* the same factor levels, color scale, and theme as your display code
               full_copy$clinvar <- factor(full_copy$clinvar,
                                           levels = c("P/LP", "B/LB", "VUS", "Conflicting"))
               
@@ -797,14 +825,14 @@ server <- function(input, output, session) {
           tmpdir <- file.path(tempdir(), paste0("csvzip_", Sys.Date()))
           if (!dir.exists(tmpdir)) dir.create(tmpdir)
           
-          # 1) Main CSV of selected variants
+          # 1) Main CSV of selected variants (already existing in your code)
           selected_df <- selected_variants()
           main_csv_path <- file.path(tmpdir, paste0("PRC_data_", input$Main_gene, ".csv"))
           if (!is.null(selected_df)) {
             write.csv(selected_df, main_csv_path, row.names = FALSE)
           }
           
-          # 2) CSV with VUS (full.csv for the chosen gene)
+          # 2) CSV with VUS (full.csv for the chosen gene) (already existing in your code)
           df_VUS <- read.csv("full.csv", stringsAsFactors = FALSE)
           prcfiltered_VUS <- df_VUS %>%
             filter(base__gene == input$Main_gene) %>%
@@ -812,48 +840,72 @@ server <- function(input, output, session) {
           vus_csv_path <- file.path(tmpdir, paste0("PRC_data_VUS_", input$Main_gene, ".csv"))
           write.csv(prcfiltered_VUS, vus_csv_path, row.names = FALSE)
           
-          # 3) For each LLR predictor, produce the CSV that includes LLR + category
-          #    This is the same approach as in the LLR tabs
+          # 3) Single CSV with LLR results for all selected predictors
           plot_info <- plot_data()
           llr_scores <- intersect(plot_info$selected_scores, c("VARITY", "REVEL", "AlphaMissense"))
           
-          # The final data used for PRC (to get posScores / negScores)
-          selected_df <- plot_info$prcfiltered  
+          # (a) Get the final data used for PRC (for posScores/negScores)
+          selected_df <- plot_info$prcfiltered
+          
+          # (b) Pull the full data (includes VUS/conflicting)
           full_filtered <- full_data()
+          
+          # (c) Rename columns for your typical "score" references:
           names(full_filtered)[names(full_filtered) == "VEP_varity_r"] <- "VARITY"
           names(full_filtered)[names(full_filtered) == "VEP_alphamissense__pathogenicity"] <- "AlphaMissense"
           names(full_filtered)[names(full_filtered) == "VEP_revel__score"] <- "REVEL"
           names(full_filtered)[names(full_filtered) == "gnomad__af"] <- "gnomAD_AF"
           
+          # We will create new columns for each predictor in "full_copy".
+          # (d) Make a working copy so we don't mutate full_data() globally:
+          all_llr_df <- full_filtered
+          
           for (score in llr_scores) {
-            posScores <- na.omit(selected_df[selected_df$clinvar == TRUE, score])
-            negScores <- na.omit(selected_df[selected_df$clinvar == FALSE, score])
             
+            # Prepare positives and negatives from your final selected_df
+            posScores <- na.omit(
+              setNames(selected_df[selected_df$clinvar == TRUE, score],
+                       selected_df[selected_df$clinvar == TRUE, "base__achange"])
+            )
+            negScores <- na.omit(
+              setNames(selected_df[selected_df$clinvar == FALSE, score],
+                       selected_df[selected_df$clinvar == FALSE, "base__achange"])
+            )
+            
+            # If at least one P/LP and one B/LB to build LLR:
             if (length(posScores) > 0 && length(negScores) > 0) {
-              # Build LLR
-              llrObj <- buildLLR.kernel(
-                setNames(posScores,
-                         selected_df[selected_df$clinvar == TRUE, "base__achange"]),
-                setNames(negScores,
-                         selected_df[selected_df$clinvar == FALSE, "base__achange"])
-              )
+              llrObj <- buildLLR.kernel(posScores, negScores)
               
-              full_copy <- full_filtered
-              full_copy$llr <- llrObj$llr(full_copy[[score]])
+              # Create the LLR column named PREDICTOR_llr
+              llr_colname <- paste0(score, "_llr")
+              all_llr_df[[llr_colname]] <- llrObj$llr(all_llr_df[[score]])
               
+              # Create the category column named PREDICTOR_category
+              cat_colname <- paste0(score, "_category")
               breaks <- c(-Inf, -1.27, -0.32, 0.32, 0.64, 1.27, 2.54, Inf)
               labels <- c("benign_strong", "benign_support", "none",
                           "patho_support", "patho_moderate", "patho_strong", "patho_vstrong")
-              full_copy$category <- cut(full_copy$llr, breaks = breaks,
-                                        labels = labels, include.lowest = TRUE)
               
-              # Write out a CSV containing all variants (including VUS/conflicting) with LLR + category
-              llr_csv_path <- file.path(tmpdir, paste0(score, "_LLR_data.csv"))
-              write.csv(full_copy, llr_csv_path, row.names = FALSE)
+              # Cut on the LLR values we just created
+              all_llr_df[[cat_colname]] <- cut(all_llr_df[[llr_colname]], 
+                                               breaks = breaks, 
+                                               labels = labels, 
+                                               include.lowest = TRUE)
+            } else {
+              # If not enough data to build LLR, fill with NA or skip, your choice
+              llr_colname <- paste0(score, "_llr")
+              cat_colname <- paste0(score, "_category")
+              all_llr_df[[llr_colname]] <- NA
+              all_llr_df[[cat_colname]] <- NA
             }
           }
           
-          # 4) Zip them up
+          # (e) Write out a single CSV for all LLR-enabled predictors:
+          #     E.g., "All_LLR_data.csv"
+          llr_csv_path <- file.path(tmpdir, "All_LLR_data.csv")
+          write.csv(all_llr_df, llr_csv_path, row.names = FALSE)
+          
+          # 4) Zip everything
           old_wd <- setwd(tmpdir)
           on.exit(setwd(old_wd), add = TRUE)
           zip::zipr(zipfile = zipfile, files = list.files(tmpdir))
@@ -1208,7 +1260,6 @@ server <- function(input, output, session) {
         df <- df[order(df$clinvar), ]
         
         prcfiltered <- df %>%
-          filter(rowSums(!is.na(df[selected_scores])) > 0) %>%
           mutate(clinvar = ifelse(clinvar == "P/LP", TRUE, ifelse(clinvar == "B/LB", FALSE, NA)))
         
         prcfiltered <- prcfiltered[!is.na(prcfiltered$clinvar), ]
