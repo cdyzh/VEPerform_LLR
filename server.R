@@ -175,7 +175,6 @@ server <- function(input, output, session) {
             # Step 2: Prepare selected data
             #incProgress(0.3, detail = "Preparing selected data")
             selected_df <- prcfiltered[selected_rows, ]
-            selected_variants(selected_df)
             
             # Check that there is at least one P/LP and one B/LB - walktag
             if (!(any(selected_df$clinvar == "P/LP") && any(selected_df$clinvar == "B/LB"))) {
@@ -206,7 +205,10 @@ server <- function(input, output, session) {
             selected_df <- selected_df[order(selected_df$clinvar), ]
             
             # Filter out any rows with an NA in any `selected_scores`
-            selected_df <- selected_df[rowSums(is.na(selected_df[selected_scores])) == 0, ]
+            selected_df <- selected_df[!(rowSums(is.na(selected_df[selected_scores])) > 0 | 
+                                           rowSums(selected_df[selected_scores] == "NA", na.rm = TRUE) > 0), ]
+            
+            selected_variants(selected_df) 
             
             # Convert label to T/F
             selected_df <- selected_df %>% mutate(clinvar = ifelse(clinvar == "P/LP", TRUE, FALSE))
@@ -319,7 +321,7 @@ server <- function(input, output, session) {
               ))
               
               if (length(posScores) > 0 & length(negScores) > 0) {
-                llrObj <- buildLLR.kernel(posScores, negScores)
+                llrObj <- buildLLR.kernel(posScores, negScores, outlierSuppression=0.01) # Change outlier suppression
                 
                 full_filtered_copy <- full_filtered
                 full_filtered_copy$llr <- llrObj$llr(full_filtered_copy[[score]]) # full_filtered_copy has llr values
@@ -487,8 +489,12 @@ server <- function(input, output, session) {
                         negScores_copy
                       )
                       
-                      # Page 2: bar plot
-                      plot.new()  
+                      # Page 2: threshold table
+                      plot.new() 
+                      gridExtra::grid.table(crossings_df_copy)
+                      
+                      # Page 3: bar plot
+                      #plot.new()  
                       p <- ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
                         geom_bar(position=position_stack(reverse=TRUE)) +
                         scale_fill_manual(values=category_colors) +
