@@ -267,16 +267,16 @@ server <- function(input, output, session) {
             }, width = 600, height = 600, res = 72)
             
             # Render the threshold table - jumptag
-            output$thresholdTableUI <- renderUI({
+            output$Main_thresholdTableUI <- renderUI({
               req(threshold_data())
               
               tagList(
                 h5("VEP threshold to achieve 90% Balanced Precision"),  # Add the title only if the table exists
-                tableOutput("thresholdTable")  
+                tableOutput("Main_thresholdTable")  
               )
             })
             
-            output$thresholdTable <- renderTable({
+            output$Main_thresholdTable <- renderTable({
               req(threshold_data())
               
               df <- threshold_data()
@@ -701,8 +701,6 @@ server <- function(input, output, session) {
       })
       
       ### New Download Handlers for ZIP Files ###
-      
-      ### Placeholder ###
 
       ### --- DOWNLOAD ALL PLOTS AS ZIP ----------------------------------------------
       output$Main_downloadAllPlotsZIP <- downloadHandler(
@@ -946,6 +944,7 @@ server <- function(input, output, session) {
       rv$prcdata_fetch <- reactiveVal(NULL)
       rv$plot_data <- reactiveVal(NULL)
       rv$variant_data_df <- reactiveVal(NULL)
+      rv$threshold_data <- reactiveVal(NULL) # for storing PRC thresholds - REFACTOR: include as part of prc data? - jumptag
       
       # Observe 'input$input_type' to reset reactive values and inputs when user switches option
       observeEvent(input$input_type, {
@@ -970,6 +969,16 @@ server <- function(input, output, session) {
               showModal(modalDialog(
                 title = "Error",
                 "The uploaded CSV must contain the columns 'base__gene' and 'clinvar'.",
+                easyClose = TRUE,
+                footer = modalButton("Close")
+              ))
+              return(NULL)
+            }
+            
+            if (!(any(df$clinvar == "P/LP") && any(df$clinvar == "B/LB"))) {
+              showModal(modalDialog(
+                title = "Error",
+                "You must have at least one P/LP and one B/LB variant.",
                 easyClose = TRUE,
                 footer = modalButton("Close")
               ))
@@ -1246,132 +1255,440 @@ server <- function(input, output, session) {
       
       # Observe 'plotButton'
       observeEvent(input$plotButton, {
-        df <- prcdata()
-        if (is.null(df) || nrow(df) == 0) {
-          output$errorText <- renderText("Not enough rows to generate the PRC plot.")
-          return()
-        }
-        
-        gene_s <- ifelse("base__gene" %in% colnames(df), df$base__gene[1], "Custom Gene")
-        exclude_common_variants <- input$common_variant_filter
-        selected_scores <- input$scores
-        
-        if (isTRUE(exclude_common_variants) && "gnomAD_AF" %in% colnames(df)) { # walktag - added isTRUE
-          df <- df[is.na(df$gnomAD_AF) | df$gnomAD_AF <= 0.005, ]
-        }
-        
-        # Remove "VEP_" prefix from predictor column names
-        colnames(df) <- gsub("^VEP_", "", colnames(df))
-        
-        df <- df[order(df$clinvar), ]
-        
-        prcfiltered <- df %>%
-          mutate(clinvar = ifelse(clinvar == "P/LP", TRUE, ifelse(clinvar == "B/LB", FALSE, NA)))
-        
-        prcfiltered <- prcfiltered[!is.na(prcfiltered$clinvar), ]
-        
-        # Filter out any rows with an NA in any `selected_scores`
-        prcfiltered <- prcfiltered[rowSums(is.na(prcfiltered[selected_scores])) == 0, ]
-        
-        P_org <- sum(prcfiltered$clinvar == TRUE)
-        B_org <- sum(prcfiltered$clinvar == FALSE)
-        
-        tryCatch({
-          yrobj <- yr2(truth = prcfiltered[["clinvar"]], scores = prcfiltered[selected_scores], high = rep(TRUE, length(selected_scores)))
-          
-          # Extra colors for lines more than 3
-          # Exclude white and near-white colors
-          available_colors <- grDevices::colors()[!grepl("white|ivory|seashell|snow|honeydew|azure|aliceblue|mintcream|ghostwhite", grDevices::colors(), ignore.case = TRUE)]
-          
-          # Generate random colors for additional predictors if more than three
-          num_scores <- min(length(selected_scores), 3)  # Only take a maximum of three predictors for specific styles
-          extra_colors <- if (length(selected_scores) > 3) {
-            sample(available_colors, length(selected_scores) - 3)
-          } else {
-            NULL
+        # Wrap everything in a withProgress block
+        withProgress(message = "Generating plots...", value = 0, {
+          df <- prcdata()
+          if (is.null(df) || nrow(df) == 0) {
+            output$errorText <- renderText("Not enough rows to generate the PRC plot.")
+            return()
           }
           
-          # Assign styles for the first three predictors, followed by additional random colors if needed
-          rv$plot_data(list(
-            yrobj = yrobj,
-            lty_styles = c("dashed", "solid", "dashed")[1:num_scores],
-            col_styles = c("purple", "cadetblue2", "orange")[1:num_scores],
-            gene_s = gene_s,
-            selected_scores = selected_scores,
-            B_org = B_org,
-            P_org = P_org,
-            common_variant_filter = exclude_common_variants,
-            prcfiltered = prcfiltered,
-            extra_colors = extra_colors  # Store extra colors for additional predictors if any
-          ))
+          gene_s <- ifelse("base__gene" %in% colnames(df), df$base__gene[1], "Custom Gene")
+          exclude_common_variants <- input$common_variant_filter
+          selected_scores <- input$scores
           
-          output$errorText <- renderText("")
+          if (isTRUE(exclude_common_variants) && "gnomAD_AF" %in% colnames(df)) { # walktag - added isTRUE
+            df <- df[is.na(df$gnomAD_AF) | df$gnomAD_AF <= 0.005, ]
+          }
           
-        }, error = function(e) {
-          rv$plot_data(NULL)
-          output$errorText <- renderText("Error generating plot.")
-        })
-        
-        output$prcPlot <- renderPlot({
-          plot_info <- rv$plot_data()
-          if (!is.null(plot_info)) {
-            tryCatch({
-              colors_to_use <- c(plot_info$col_styles, plot_info$extra_colors)
-              draw.prc(
-                plot_info$yrobj,
-                lty = c(plot_info$lty_styles, rep(c("solid", "dashed"), length(plot_info$extra_colors))),
-                col = colors_to_use,
-                lwd = 2,
-                balanced = TRUE,
-                main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", "))
+          # Remove "VEP_" prefix from predictor column names
+          colnames(df) <- gsub("^VEP_", "", colnames(df))
+          
+          df <- df[order(df$clinvar), ]
+          
+          prcfiltered <- df %>%
+            mutate(clinvar = ifelse(clinvar == "P/LP", TRUE, ifelse(clinvar == "B/LB", FALSE, NA)))
+          
+          prcfiltered <- prcfiltered[!is.na(prcfiltered$clinvar), ]
+          
+          # Filter out any rows with an NA in any `selected_scores`
+          prcfiltered <- prcfiltered[rowSums(is.na(prcfiltered[selected_scores])) == 0, ]
+          
+          P_org <- sum(prcfiltered$clinvar == TRUE)
+          B_org <- sum(prcfiltered$clinvar == FALSE)
+          
+          tryCatch({
+            yrobj <- yr2(truth = prcfiltered[["clinvar"]], scores = prcfiltered[selected_scores], high = rep(TRUE, length(selected_scores)))
+            
+            # Added for threshold calculation - jumptag
+            thresh_ranges <- calculate_thresh_range(yrobj, x = 0.9, balanced = TRUE)
+            
+            # Store thresholds for rendering
+            threshold_data(thresh_ranges)
+            
+            # Extra colors for lines more than 3
+            # Exclude white and near-white colors
+            available_colors <- grDevices::colors()[!grepl("white|ivory|seashell|snow|honeydew|azure|aliceblue|mintcream|ghostwhite", grDevices::colors(), ignore.case = TRUE)]
+            
+            # Generate random colors for additional predictors if more than three
+            num_scores <- min(length(selected_scores), 3)  # Only take a maximum of three predictors for specific styles
+            extra_colors <- if (length(selected_scores) > 3) {
+              sample(available_colors, length(selected_scores) - 3)
+            } else {
+              NULL
+            }
+            
+            # Assign styles for the first three predictors, followed by additional random colors if needed
+            rv$plot_data(list(
+              yrobj = yrobj,
+              lty_styles = c("dashed", "solid", "dashed")[1:num_scores],
+              col_styles = c("purple", "cadetblue2", "orange")[1:num_scores],
+              gene_s = gene_s,
+              selected_scores = selected_scores,
+              B_org = B_org,
+              P_org = P_org,
+              common_variant_filter = exclude_common_variants,
+              prcfiltered = prcfiltered,
+              extra_colors = extra_colors  # Store extra colors for additional predictors if any
+            ))
+            
+            output$errorText <- renderText("")
+            
+          }, error = function(e) {
+            rv$plot_data(NULL)
+            output$errorText <- renderText("Error generating plot.")
+          })
+          
+          output$PRCPlot <- renderPlot({
+            plot_info <- rv$plot_data()
+            if (!is.null(plot_info)) {
+              tryCatch({
+                colors_to_use <- c(plot_info$col_styles, plot_info$extra_colors)
+                draw.prc(
+                  plot_info$yrobj,
+                  lty = c(plot_info$lty_styles, rep(c("solid", "dashed"), length(plot_info$extra_colors))),
+                  col = colors_to_use,
+                  lwd = 2,
+                  balanced = TRUE,
+                  main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", "))
+                )
+                abline(h = 90, lty = "dashed")
+                legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org), paste("# of Benign and Likely Benign:", plot_info$B_org)), pch = 15, bty = "n")
+              }, error = function(e) {
+                showModal(modalDialog(
+                  title = 'Error',
+                  'Not enough data - must have at least one pathogenic and benign.',
+                  easyClose = TRUE,
+                  footer = NULL
+                ))
+              })
+            }
+          }, width = 600, height = 600, res = 72)
+          
+          # Render the threshold table - jumptag
+          output$thresholdTableUI <- renderUI({
+            req(threshold_data())
+            
+            tagList(
+              h5("VEP threshold to achieve 90% Balanced Precision"),  # Add the title only if the table exists
+              tableOutput("thresholdTable")  
+            )
+          })
+          
+          output$thresholdTable <- renderTable({
+            req(threshold_data())
+            
+            df <- threshold_data()
+            
+            # Round numeric columns to 3 decimals if numeric
+            df <- as.data.frame(lapply(df, function(x) {
+              if (is.numeric(x)) {
+                format(round(x, 3), nsmall = 3)
+              } else {
+                x
+              }
+            }))
+            df
+          }, rownames = FALSE)
+          
+          # LLR Plot - walktag
+          ##############################################################
+          ## ADDED SECTION: LLR generation, with progress bar and tabs ##
+          ##############################################################
+          
+          # We'll use the final data used for the PRC (plot_info$prcfiltered)
+          # as the training set for LLR. Then we apply that LLR to the full
+          # advanced data (prcdata()) so the user sees classification categories
+          # for P/LP, B/LB, VUS, Conflicting, etc.
+          
+          # 1) Initialize list for LLR tabs
+          llr_tabs <- list()
+          llr_scores <- paste0("VEP_", selected_scores)
+          
+          incProgress(0.5, detail = "Reading full LLR data (this might take a while)")
+          # Retrieve filtered full data
+          full_filtered <- prcdata()
+
+          for (score_idx in seq_along(llr_scores)) {
+            score <- llr_scores[score_idx]
+            incProgress(0.5+0.5/length(llr_scores), detail = paste("Generating LLR plot for:", score))
+            
+            posScores <- na.omit(setNames(
+              full_filtered[full_filtered$clinvar == "P/LP", score],
+              full_filtered[full_filtered$clinvar == "P/LP", "base__achange"]
+            ))
+            negScores <- na.omit(setNames(
+              full_filtered[full_filtered$clinvar == "B/LB", score],
+              full_filtered[full_filtered$clinvar == "B/LB", "base__achange"]
+            ))
+
+            if (length(posScores) > 0 & length(negScores) > 0) {
+              llrObj <- buildLLR.kernel(posScores, negScores, outlierSuppression=0.01) # Change outlier suppression
+              
+              full_filtered_copy <- full_filtered
+              full_filtered_copy$llr <- llrObj$llr(full_filtered_copy[[score]]) # full_filtered_copy has llr values
+              
+              # Define breakpoints and labels for the categories
+              breaks <- c(-Inf, -1.27, -0.32, 0.32, 0.64, 1.27, 2.54, Inf)
+              labels <- c(
+                "benign_strong",   # (-Inf, -1.27]
+                "benign_support",  # (-1.27, -0.32]
+                "none",            # (-0.32, 0.32]
+                "patho_support",   # (0.32, 0.64]
+                "patho_moderate",  # (0.64, 1.27]
+                "patho_strong",    # (1.27, 2.54]
+                "patho_vstrong"    # (2.54, Inf)
               )
-              abline(h = 90, lty = "dashed")
-              legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_info$P_org), paste("# of Benign and Likely Benign:", plot_info$B_org)), pch = 15, bty = "n")
-            }, error = function(e) {
-              showModal(modalDialog(
-                title = 'Error',
-                'Not enough data - must have at least one pathogenic and benign.',
-                easyClose = TRUE,
-                footer = NULL
-              ))
+              
+              # Categorize llr based on the defined bins
+              full_filtered_copy$category <- cut(full_filtered_copy$llr, breaks=breaks, labels=labels, include.lowest=TRUE)
+              
+              full_filtered_copy <- full_filtered_copy %>% filter(!is.na(category)) # filter NA - due to score and llr being NA
+              
+              # Define thresholds and search range for crossings
+              llrTs <- llrThresholds(optiLLR(0.1))
+              x_range <- range(c(posScores, negScores))
+              
+              # Find where the LLR function crosses the thresholds
+              crossings_df <- findLLRcrossings(llrObj$llr, llrTs, x_range)
+              
+              # Create the stacked bar plot of clinvar vs category
+              # Assign colors as requested:
+              # dark blue for benign_strong, red for patho_vstrong, grey for none
+              # other categories lighter shades in between
+              category_colors <- c(
+                "benign_strong"   = "dodgerblue",
+                "benign_support"  = "lightblue",
+                "none"            = "grey",
+                "patho_support"   = "#FFC0CB",   # light pink
+                "patho_moderate"  = "#FF9999",   # medium pink
+                "patho_strong"    = "#FF6666",   # darker pink
+                "patho_vstrong"   = "red"
+              )
+              
+              plot_stack_id <- paste0("Main_Stacked_", score)
+              
+              # Preserve current iteration's variables, or else it would be same plot
+              local({
+                # Make local copies of the variables to avoid referencing loop variables
+                score_copy <- score
+                posScores_copy <- posScores
+                negScores_copy <- negScores
+                llrObj_copy <- llrObj
+                full_filtered_copy_local <- full_filtered_copy
+                crossings_df_copy <- crossings_df
+                
+                plot_id <- paste0("Main_LLRPlot_", score_copy)
+                table_id <- paste0("Main_LLRCrossingsTable_", score_copy)
+                
+                # -----------------------------
+                # 1) DEFINE DOWNLOAD BUTTON IDS
+                # -----------------------------
+                download_llr_png_id <- paste0("download_", score_copy, "_llr_png")
+                download_bar_svg_id <- paste0("download_", score_copy, "_bar_svg")
+                download_both_pdf_id <- paste0("download_", score_copy, "_both_pdf")
+                download_csv_id      <- paste0("download_", score_copy, "_csv")
+                
+                output[[plot_id]] <- renderPlot({
+                  tryCatch({
+                    drawDensityLLR_fixedRange(
+                      full_filtered_copy_local[[score_copy]], 
+                      llrObj_copy$llr, 
+                      llrObj_copy$posDens, 
+                      llrObj_copy$negDens, 
+                      posScores_copy, 
+                      negScores_copy
+                    )
+                  }, error = function(e) {
+                    showModal(modalDialog(
+                      title = 'Error',
+                      'Not enough data',
+                      easyClose = TRUE,
+                      footer = NULL
+                    ))
+                  })
+                }, width = 500, height = 600, res = 72)
+                
+                # Render the stacked bar chart
+                output[[plot_stack_id]] <- renderPlot({
+                  # Make sure we have factor ordering if needed
+                  full_filtered_copy_local$clinvar <- factor(full_filtered_copy_local$clinvar, 
+                                                             levels = c("P/LP", "B/LB", "VUS", "Conflicting"))
+                  ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
+                    geom_bar(position=position_stack(reverse=TRUE)) + # reverse to put pathogenic at top like the LLR
+                    scale_fill_manual(values=category_colors) +
+                    theme_minimal() +
+                    labs(x="ClinVar Category", y="Variant Count", fill="LLR-Derived Evidence Category") +
+                    theme(axis.text.x = element_text(angle=45, hjust=1))
+                }, width = 300, height = 500, res = 72)
+                
+                # Render the table of LLR threshold crossings
+                output[[table_id]] <- renderTable({
+                  crossings_df_copy
+                })
+                
+                # -----------------------------------
+                # 3) DEFINE DOWNLOAD HANDLERS (NEW)
+                # -----------------------------------
+                
+                # 3a) Download LLR (PNG)
+                output[[download_llr_png_id]] <- downloadHandler(
+                  filename = function() { paste0(score_copy, "_LLRPlot.png") },
+                  content = function(file) {
+                    # Use a PNG device and re-draw the same LLR plot
+                    png(file, width = 500, height = 600, res = 72)
+                    drawDensityLLR_fixedRange(
+                      full_filtered_copy_local[[score_copy]],
+                      llrObj_copy$llr,
+                      llrObj_copy$posDens,
+                      llrObj_copy$negDens,
+                      posScores_copy,
+                      negScores_copy
+                    )
+                    dev.off()
+                  }
+                )
+                
+                # 3b) Download bar plot (SVG)
+                output[[download_bar_svg_id]] <- downloadHandler(
+                  filename = function() {
+                    paste0(score_copy, "_BarPlot.svg")
+                  },
+                  content = function(file) {
+                    # Open the SVG device
+                    svg(file, width = 5, height = 5)
+                    
+                    # Construct the ggplot as usual
+                    p <- ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
+                      geom_bar(position=position_stack(reverse=TRUE)) +
+                      scale_fill_manual(values=category_colors) +
+                      theme_minimal() +
+                      labs(x="ClinVar Category", y="Variant Count", fill="LLR-Derived Evidence Category") +
+                      theme(axis.text.x = element_text(angle=45, hjust=1))
+                    
+                    # Print the ggplot to render onto the SVG device
+                    print(p)
+                    
+                    # Close the device
+                    dev.off()
+                  }
+                )
+                
+                # 3c) Download both (PDF)
+                output[[download_both_pdf_id]] <- downloadHandler(
+                  filename = function() { paste0(score_copy, "_LLR_and_Bar.pdf") },
+                  content = function(file) {
+                    # Create a 2-page PDF: first page = LLR plot, second page = bar plot
+                    pdf(file, width = 6, height = 6)
+                    
+                    # Page 1: LLR
+                    drawDensityLLR_fixedRange(
+                      full_filtered_copy_local[[score_copy]],
+                      llrObj_copy$llr,
+                      llrObj_copy$posDens,
+                      llrObj_copy$negDens,
+                      posScores_copy,
+                      negScores_copy
+                    )
+                    
+                    # Page 2: threshold table
+                    plot.new() 
+                    gridExtra::grid.table(crossings_df_copy)
+                    
+                    # Page 3: bar plot
+                    #plot.new()  
+                    p <- ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
+                      geom_bar(position=position_stack(reverse=TRUE)) +
+                      scale_fill_manual(values=category_colors) +
+                      theme_minimal() +
+                      labs(x="ClinVar Category", y="Count", fill="LLR Category") +
+                      theme(axis.text.x = element_text(angle=45, hjust=1))
+                    print(p)
+                    
+                    dev.off()
+                  }
+                )
+                
+                # 3d) Download CSV of variants w/ LLR + category
+                output[[download_csv_id]] <- downloadHandler(
+                  filename = function() { paste0(score_copy, "_LLR_data.csv") },
+                  content = function(file) {
+                    # This CSV includes all variants (including VUS/conflicting) 
+                    # that remain in full_filtered_copy_local, along with LLR and category
+                    write.csv(full_filtered_copy_local, file, row.names = FALSE)
+                  }
+                )
+                
+                # -----------------------------------
+                # 4) BUILD THE UI FOR THIS TAB
+                # -----------------------------------
+                llr_tabs[[length(llr_tabs) + 1]] <<- tabPanel(
+                  score_copy,
+                  fluidRow(
+                    column(
+                      5,
+                      # LLR plot
+                      plotOutput(plot_id, width = "500px", height = "600px")
+                    ),
+                    column(
+                      4, offset = 3,
+                      # Bar plot
+                      plotOutput(plot_stack_id, width = "300px", height = "500px"),
+                      
+                      # Download buttons stacked vertically
+                      tags$div(
+                        style = "margin-top: 40px; text-align: left;",
+                        downloadButton(download_llr_png_id,   "Download LLR (PNG)"),
+                        tags$br(),
+                        downloadButton(download_bar_svg_id,   "Download bar plot (SVG)"),
+                        tags$br(),
+                        downloadButton(download_both_pdf_id,  "Download both (PDF)"),
+                        tags$br(),
+                        downloadButton(download_csv_id,       "Download all variants with LLRs (CSV)")
+                      )
+                    )
+                  ),
+                  tableOutput(table_id)
+                )
+              })
+            }
+          }
+          
+          if (length(llr_tabs) > 0) {
+            output$LLRTabs <- renderUI({
+              do.call(tabsetPanel, c(id="llr_tabs", llr_tabs))
+            })
+          } else {
+            output$LLRTabs <- renderUI({
+              "No LLR plots available"
             })
           }
-        }, width = 600, height = 600, res = 72)
-        
-        if (P_org < 11 || B_org < 11) {
-          showModal(modalDialog(
-            title = "Warning",
-            "There are fewer than 11 Pathogenic/Likely Pathogenic or Benign/Likely Benign variants. 
-           Please use extra caution when interpreting these plots.",
-            easyClose = TRUE,
-            footer = modalButton("Close")
-          ))
-        }
-        
+          
+          # Final step: completed
+          incProgress(1.0, detail = "Done")
+          removeModal()
+          
+          if (P_org < 11 || B_org < 11) {
+            showModal(modalDialog(
+              title = "Warning",
+              "There are fewer than 11 Pathogenic/Likely Pathogenic or Benign/Likely Benign variants. 
+             Please use extra caution when interpreting these plots.",
+              easyClose = TRUE,
+              footer = modalButton("Close")
+            ))
+          }
+        })
       })
       
       # Download logic 
-      output$download_buttons <- renderUI({
-        req(rv$plot_data())  # Only show if plot has been generated
+      output$PRC_Download_Buttons <- renderUI({
+        req(rv$plot_data())  # Ensure the plot data exists before showing buttons
         
-        tagList(
-          actionButton("helpButton", "Plot Explanation", class = "btn-info"),
-          helpText(HTML("<span style='color:black;'><strong>Download Options: </strong></span>")),
+        tags$div(
+          style = "margin-top: 20px;",
+          helpText(HTML("<strong>PRC Plot Download Options:</strong>")),
           downloadButton("downloadPlotPNG", "Download PRC Plot as PNG"),
-          downloadButton("downloadPlotPDF", HTML("Download PRC Plot and <br>Metadata as PDF")),
-          downloadButton("downloadCSV", HTML("Download Variants Used as <br>CSV")),
-          if (is.data.frame(rv$variant_data_df) && nrow(rv$variant_data_df) > 0) { # Only if getting data from fetch
-            div(
-              style = "display: inline-flex; align-items: center;",
-              downloadButton("downloadCSV_VUS", HTML("Download CSV with VUS")),
-              actionLink("helpButton_VUS", label = NULL, icon = icon("question-circle"), style = "margin-left: 5px;")
-            )
-          } else {
-            NULL
-          }
+          downloadButton("downloadPlotPDF", "Download PRC Plot and Metadata as PDF"),
+          downloadButton("downloadCSV", "Download Variants Used as CSV"),
+          div(
+            style = "display: inline-flex; align-items: center;",
+            downloadButton("downloadCSV_VUS", HTML("Download CSV with VUS")),
+            actionLink("helpButton_VUS", label = NULL, icon = icon("question-circle"), style = "margin-left: 5px;")
+          )
         )
       })
       
+      # Download PNG logic for Main App
       output$downloadPlotPNG <- downloadHandler(
         filename = function() {
           paste("PRC_plot_", Sys.Date(), ".png", sep = "")
@@ -1415,7 +1732,7 @@ server <- function(input, output, session) {
         }
       )
       
-      
+      # Download PDF with metadata logic
       output$downloadPlotPDF <- downloadHandler(
         filename = function() {
           paste("PRC_Report_", Sys.Date(), ".pdf", sep = "")
@@ -1463,6 +1780,7 @@ server <- function(input, output, session) {
         }
       )
       
+      # VUS explanation help button
       observeEvent(input$helpButton_VUS, {
         showModal(modalDialog(
           title = "What does this data include?",
@@ -1474,6 +1792,225 @@ server <- function(input, output, session) {
           footer = modalButton("Close")
         ))
       }, ignoreInit = TRUE)
+      
+      output$download_buttons <- renderUI({
+        req(rv$plot_data())  # Only show if plot_data has been generated
+        
+        tagList(
+          actionButton("helpButton", "Plot Explanation", class = "btn-info"),
+          helpText(HTML("<span style='color:black;'><strong>Download Options: </strong></span>")),
+          downloadButton("downloadAllPlotsZIP", "Download All Plots (ZIP)"),
+          downloadButton("downloadAllCSVsZIP", "Download All CSVs (ZIP)")
+        )
+      })
+      
+      ### New Download Handlers for ZIP Files ###
+      ### ---------------------- HELPER FUNCTION TO CREATE ZIP FILES ---------------------- ###
+      generate_zip <- function(zipfile, file_list, tmpdir) {
+        old_wd <- setwd(tmpdir)
+        on.exit(setwd(old_wd), add = TRUE)
+        zip::zipr(zipfile = zipfile, files = file_list)
+      }
+      
+      ### ---------------------- DOWNLOAD ALL PLOTS AS ZIP -------------------------------- ###
+      output$downloadAllPlotsZIP <- downloadHandler(
+        filename = function() {
+          paste0("AllPlots_", Sys.Date(), ".zip")
+        },
+        content = function(zipfile) {
+          req(rv$plot_data())
+          
+          tmpdir <- file.path(tempdir(), paste0("plotszip_", Sys.Date()))
+          if (!dir.exists(tmpdir)) dir.create(tmpdir)
+          
+          plot_info <- rv$plot_data()
+          file_list <- c()
+          
+          # 1) Save PRC Plot
+          prc_png <- file.path(tmpdir, paste0("PRC_plot_", plot_info$gene_s, ".png"))
+          png(prc_png, width = 6, height = 6, units = "in", res = 72)
+          draw.prc(plot_info$yrobj, lty = plot_info$lty_styles, col = plot_info$col_styles, 
+                   lwd = 2, balanced = TRUE, 
+                   main = paste0(plot_info$gene_s, " PRCs for ", paste(plot_info$selected_scores, collapse = ", ")))
+          abline(h = 90, lty = "dashed")
+          legend("left", legend = c(paste("# of Pathogenic:", plot_info$P_org), paste("# of Benign:", plot_info$B_org)), 
+                 pch = 15, bty = "n")
+          dev.off()
+          
+          if (file.exists(prc_png)) file_list <- c(file_list, prc_png)
+          
+          # 2) Save LLR & Bar Plots
+          llr_scores <- paste0("VEP_", plot_info$selected_scores)
+          full_filtered <- prcdata()
+          
+          # Define category colors (FIX: Ensure it exists in function scope)
+          category_colors <- c(
+            "benign_strong"   = "dodgerblue",
+            "benign_support"  = "lightblue",
+            "none"            = "grey",
+            "patho_support"   = "#FFC0CB",
+            "patho_moderate"  = "#FF9999",
+            "patho_strong"    = "#FF6666",
+            "patho_vstrong"   = "red"
+          )
+          
+          for (score in llr_scores) {
+            posScores <- na.omit(full_filtered[full_filtered$clinvar == "P/LP", score])
+            negScores <- na.omit(full_filtered[full_filtered$clinvar == "B/LB", score])
+            
+            if (length(posScores) > 0 && length(negScores) > 0) {
+              llrObj <- buildLLR.kernel(posScores, negScores)
+              
+              # Assign LLR values
+              full_filtered$llr <- llrObj$llr(full_filtered[[score]])
+              
+              # ✅ FIX: Generate the category column
+              breaks <- c(-Inf, -1.27, -0.32, 0.32, 0.64, 1.27, 2.54, Inf)
+              labels <- c("benign_strong", "benign_support", "none",
+                          "patho_support", "patho_moderate", "patho_strong", "patho_vstrong")
+              
+              full_filtered$category <- cut(full_filtered$llr, breaks, labels, include.lowest = TRUE)
+              
+              # Generate LLR density plot
+              llr_png_path <- file.path(tmpdir, paste0("LLR_", score, ".png"))
+              png(llr_png_path, width = 500, height = 600, res = 72)
+              drawDensityLLR_fixedRange(full_filtered[[score]], llrObj$llr, llrObj$posDens, llrObj$negDens, posScores, negScores)
+              dev.off()
+              if (file.exists(llr_png_path)) file_list <- c(file_list, llr_png_path)
+              
+              # Generate Bar plot
+              bar_png_path <- file.path(tmpdir, paste0("Bar_", score, ".png"))
+              png(bar_png_path, width = 300, height = 500, res = 72)
+              
+              full_filtered$clinvar <- factor(full_filtered$clinvar,
+                                              levels = c("P/LP", "B/LB", "VUS", "Conflicting"))
+              
+              bar_plot <- ggplot(full_filtered, aes(x = clinvar, fill = category)) +
+                geom_bar(position = position_stack(reverse = TRUE)) +
+                scale_fill_manual(values = category_colors) +
+                theme_minimal() +
+                labs(x = "ClinVar Category", y = "Variant Count",
+                     fill = "LLR-Derived Evidence Category") +
+                theme(axis.text.x = element_text(angle = 45, hjust = 1))
+              
+              print(bar_plot)
+              dev.off()
+              
+              if (file.exists(bar_png_path)) file_list <- c(file_list, bar_png_path)
+            }
+          }
+          # 3) Ensure at least one file exists before zipping
+          if (length(file_list) == 0) {
+            showModal(modalDialog(
+              title = "Error", "No plots were generated. Check inputs and try again.", easyClose = TRUE
+            ))
+            return(NULL)
+          }
+          
+          # 4) Zip all files
+          generate_zip(zipfile, file_list, tmpdir)
+        }
+      )
+      
+      
+      ### ---------------------- DOWNLOAD ALL CSVS AS ZIP -------------------------------- ###
+      output$downloadAllCSVsZIP <- downloadHandler(
+        filename = function() {
+          paste0("AllCSVs_", Sys.Date(), ".zip")
+        },
+        content = function(zipfile) {
+          req(rv$plot_data())
+          
+          tmpdir <- file.path(tempdir(), paste0("csvzip_", Sys.Date()))
+          if (!dir.exists(tmpdir)) dir.create(tmpdir)
+          
+          plot_info <- rv$plot_data()
+          file_list <- c()
+          
+          # 1) Save PRC Data CSV
+          prc_csv <- file.path(tmpdir, "PRC_data.csv")
+          selected_df <- plot_info$prcfiltered
+          
+          if (!is.null(selected_df) && nrow(selected_df) > 0) {
+            write.csv(selected_df, prc_csv, row.names = FALSE)
+            if (file.exists(prc_csv)) file_list <- c(file_list, prc_csv)
+          } else {
+            print("WARNING: PRC data CSV is empty, skipping...")
+          }
+          
+          # 2) Save VUS Data CSV 
+          all_df <- prcdata() 
+          
+          vus_csv <- file.path(tmpdir, "AllData_includingVUS.csv")
+          if (!is.null(all_df) && nrow(all_df) > 0) {
+            write.csv(all_df, vus_csv, row.names = FALSE)
+            if (file.exists(vus_csv)) file_list <- c(file_list, vus_csv)
+          } else {
+            print("WARNING: VUS data CSV is empty, skipping...")
+          }
+          
+          # 3) Save LLR CSV
+          llr_scores <- paste0("VEP_", plot_info$selected_scores)
+          full_filtered <- prcdata()  # Use prcdata() instead of full_data()
+          
+          # Ensure full_filtered is not NULL
+          if (!is.null(full_filtered) && nrow(full_filtered) > 0) {
+            
+            all_llr_df <- full_filtered  # Make a copy - NOTE: change name
+            
+            for (score in llr_scores) {
+              # Ensure the score exists in the dataframe
+              if (score %in% names(all_llr_df) && score %in% names(all_llr_df)) {
+                posScores <- na.omit(setNames(all_llr_df[all_llr_df$clinvar == "P/LP", score],
+                                              all_llr_df[all_llr_df$clinvar == "P/LP", "base__achange"]))
+                negScores <- na.omit(setNames(all_llr_df[all_llr_df$clinvar == "B/LB", score],
+                                              all_llr_df[all_llr_df$clinvar == "B/LB", "base__achange"]))
+                
+                # If at least one P/LP and one B/LB to build LLR:
+                if (length(posScores) > 0 && length(negScores) > 0) {
+                  llrObj <- buildLLR.kernel(posScores, negScores)
+                  
+                  # Create the LLR column named PREDICTOR_llr
+                  llr_colname <- paste0(score, "_llr")
+                  all_llr_df[[llr_colname]] <- llrObj$llr(all_llr_df[[score]])
+                  
+                  # Create the category column named PREDICTOR_category
+                  cat_colname <- paste0(score, "_category")
+                  breaks <- c(-Inf, -1.27, -0.32, 0.32, 0.64, 1.27, 2.54, Inf)
+                  labels <- c("benign_strong", "benign_support", "none",
+                              "patho_support", "patho_moderate", "patho_strong", "patho_vstrong")
+                  
+                  all_llr_df[[cat_colname]] <- cut(all_llr_df[[llr_colname]], breaks = breaks,
+                                                   labels = labels, include.lowest = TRUE)
+                }
+              }
+            }
+            
+            # Write out LLR CSV if data exists
+            if (ncol(all_llr_df) > ncol(full_filtered)) {  # Check if new columns were added
+              llr_csv <- file.path(tmpdir, "All_LLR_data.csv")
+              write.csv(all_llr_df, llr_csv, row.names = FALSE)
+              if (file.exists(llr_csv)) file_list <- c(file_list, llr_csv)
+            }
+          }
+          
+          # 4) Ensure at least one file exists before zipping
+          if (length(file_list) == 0) {
+            showModal(modalDialog(
+              title = "Error",
+              "No CSVs were generated. Check inputs and try again.",
+              easyClose = TRUE
+            ))
+            return(NULL)
+          }
+          
+          # 5) Zip all CSVs
+          generate_zip(zipfile, file_list, tmpdir)
+        }
+      )
+      
+      
+      
       
       # ObserveEvent for helpButton
       observeEvent(input$helpButton, {

@@ -66,13 +66,13 @@ ui <- fluidPage(
                  ),
                  mainPanel(
                    tabsetPanel(
-                     id = "plot_tabs",
+                     id = "Main_plot_tabs",
                      
                      # Tab for the PRC plot
                      tabPanel(
                        title = "Precision-Recall Curves (PRC) - VEP Performance",
                        plotOutput("Main_PRCPlot", width = "600px", height = "600px"),
-                       uiOutput("thresholdTableUI"), # jumptag
+                       uiOutput("Main_thresholdTableUI"), # jumptag
                        uiOutput("Main_PRC_Download_Buttons")
                      ),
                      
@@ -154,8 +154,24 @@ ui <- fluidPage(
                  ),
                  
                  mainPanel(
-                   plotOutput("prcPlot", width = "600px", height = "600px"),
-                   textOutput("errorText")
+                   tabsetPanel(
+                     id = "plot_tabs",
+                     
+                     # Tab for the PRC plot
+                     tabPanel(
+                       title = "Precision-Recall Curves (PRC) - VEP Performance",
+                       plotOutput("PRCPlot", width = "600px", height = "600px"),
+                       uiOutput("thresholdTableUI"), # jumptag
+                       uiOutput("PRC_Download_Buttons")
+                     ),
+                     
+                     # Tab for the LLR plot
+                     tabPanel(
+                       title = "Log Likelihood Ratios (LLR) - Evidence Strength",
+                       uiOutput("LLRTabs")
+                     )
+                   ),
+                   textOutput("ErrorText")
                  )
                )
              )
