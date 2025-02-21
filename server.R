@@ -1047,8 +1047,14 @@ server <- function(input, output, session) {
       )
       
       # Logic for 'fetch' input_type
+      rv$fetching_in_progress <- FALSE  # Track fetch state
       observeEvent(input$fetchButton, {
         if (input$input_type == "fetch") {
+          if (rv$fetching_in_progress) return()  # Prevent duplicate execution
+          rv$fetching_in_progress <- TRUE  # Lock fetching process
+          
+          # Disable the fetch button while fetching
+          disable("fetchButton")
           # Initialize empty list to store results
           all_results <- list()
           
@@ -1200,6 +1206,9 @@ server <- function(input, output, session) {
             rv$prcdata_fetch(NULL)
           })
         }
+        # Re-enable the fetch button & reset flag
+        enable("fetchButton")
+        rv$fetching_in_progress <- FALSE
       })
       
       
@@ -1212,6 +1221,21 @@ server <- function(input, output, session) {
         } else {
           NULL
         }
+      })
+      
+      ### Common variant filter insertion
+      # Ensure the checkbox is reset when switching tabs
+      observeEvent(input$navbar, {
+        if (input$navbar == "Advanced") {
+          rv$gnomad_filter_inserted <- FALSE  # Reset flag when entering Advanced mode
+          removeUI(selector = "#gnomad_filter_wrapper", immediate = TRUE)
+        }
+      })
+      
+      # Ensure the checkbox is removed when switching input types (own <-> fetch)
+      observeEvent(input$input_type, {
+        rv$gnomad_filter_inserted <- FALSE  # Reset when switching input source
+        removeUI(selector = "#gnomad_filter_wrapper", immediate = TRUE)
       })
       
       # Observe when prcdata changes to add gnomAD checkbox
