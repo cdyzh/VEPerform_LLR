@@ -13,21 +13,36 @@ library(jsonlite)
 library(DT)
 library(ggplot2)
 library(shinycssloaders)
+library(data.table)
 
 server <- function(input, output, session) {
   plot_data <- reactiveVal(NULL)
   selected_variants <- reactiveVal(NULL)  # Store user-selected variants
   threshold_data <- reactiveVal(NULL) # for storing PRC thresholds - REFACTOR: include as part of prc data? - jumptag
   
+  #--- Show "Please Wait..." modal once at startup
+  showModal(modalDialog(
+    title = "Loading Data",
+    "Please wait... The application is loading.",
+    footer = NULL,
+    easyClose = FALSE
+  ))
+  
+  #--- Load data once
+  preprocessed_df <- read.table("preprocessed.csv", sep = ',', header = TRUE, stringsAsFactors = FALSE)
+  full_df <- as.data.frame(fread("full.csv"))
+  
+  #--- Set up reactives/ reactiveValues
+  prcdata <- reactiveVal(preprocessed_df)
+  rv <- reactiveValues(full_df = full_df)
+  
+  #--- Remove modal after everything is loaded
+  removeModal()
+  
   # Giant if/else block to handle separate logic for Main App and Advanced
   observe({
     if (input$navbar == "Basic") {
       # logic for Main App
-      prcdata <- reactive({
-        df <- read.table("preprocessed.csv", sep = ',', header = TRUE, stringsAsFactors = FALSE)
-        return(df)
-      })
-      
       # Update gene names based on what exists
       observe({
         df <- prcdata()
@@ -71,15 +86,19 @@ server <- function(input, output, session) {
         updateCheckboxGroupInput(session, "Main_scores", choices = available_scores, selected = available_scores)
       })
       
+      observe({
+        req(rv$full_df)  # Ensure data has loaded
+        removeModal()  # Remove loading modal once everything is ready
+      })
+      
       # walktag - for LLR VUS plots
       full_data <- reactive({
         req(input$Main_gene)  # Ensure a gene is selected
-        
+        req(rv$full_df)  # Ensure full dataset is available
         # Read and filter full.csv for the selected gene
-        df_full <- read.csv("full.csv", stringsAsFactors = FALSE)
-        df_full$clinvar[df_full$clinvar == "N/A"] <- NA # Treat as actual NA
-        df_filtered <- df_full %>% filter(base__gene == input$Main_gene & !is.na(clinvar))
-        
+        #df_full <- read.csv("full.csv", stringsAsFactors = FALSE)
+        #df_full$clinvar[df_full$clinvar == "N/A"] <- NA # Treat as actual NA
+        df_filtered <- rv$full_df %>% filter(base__gene == input$Main_gene & !is.na(clinvar))
         return(df_filtered)
       })
       
