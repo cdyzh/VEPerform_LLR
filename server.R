@@ -14,13 +14,12 @@ library(DT)
 library(ggplot2)
 library(shinycssloaders)
 library(data.table)
+library(future)
+library(promises)
+
+plan(multisession)
 
 server <- function(input, output, session) {
-  plot_data <- reactiveVal(NULL)
-  selected_variants <- reactiveVal(NULL)  # Store user-selected variants
-  threshold_data <- reactiveVal(NULL) # for storing PRC thresholds - REFACTOR: include as part of prc data? - jumptag
-  
-  #--- Show "Please Wait..." modal once at startup
   showModal(modalDialog(
     title = "Loading Data",
     "Please wait... The application is loading.",
@@ -28,16 +27,33 @@ server <- function(input, output, session) {
     easyClose = FALSE
   ))
   
-  #--- Load data once
+  plot_data <- reactiveVal(NULL)
+  selected_variants <- reactiveVal(NULL)  # Store user-selected variants
+  threshold_data <- reactiveVal(NULL) # for storing PRC thresholds - REFACTOR: include as part of prc data? - jumptag
+  
+  # preprocessed is small, so read synchronously
   preprocessed_df <- read.table("preprocessed.csv", sep = ',', header = TRUE, stringsAsFactors = FALSE)
-  full_df <- as.data.frame(fread("full.csv"))
-  
-  #--- Set up reactives/ reactiveValues
   prcdata <- reactiveVal(preprocessed_df)
-  rv <- reactiveValues(full_df = full_df)
   
-  #--- Remove modal after everything is loaded
-  removeModal()
+  rv <- reactiveValues(full_df = NULL, loadingFull = TRUE)
+  
+  # Use future to read full.csv async
+  future({
+    df <- fread("full.csv")
+    as.data.frame(df)
+  }) %...>% (function(big_data) {
+    # Invoked upon success
+    rv$full_df <- big_data
+    rv$loadingFull <- FALSE
+  }) %...!% (function(err) {
+    # Invoked on error
+    rv$loadingFull <- FALSE
+    showModal(modalDialog(
+      title = "Error loading large data",
+      paste("Could not load full.csv:", conditionMessage(err))
+    ))
+  })
+  
   
   # Giant if/else block to handle separate logic for Main App and Advanced
   observe({
@@ -51,6 +67,7 @@ server <- function(input, output, session) {
           updateSelectizeInput(session, "Main_gene", choices = gene_names, selected = character(0), server = TRUE)
         }
       })
+      removeModal() # Remove app loading modal after gene list is updated 
       
       # Update scores - show only if a predictor has at least 1 P/LP and 1 B/LB
       observe({
@@ -172,6 +189,18 @@ server <- function(input, output, session) {
       
       # After confirmation from the modal
       observeEvent(input$confirm_selection, {
+        # (a) Check if the large data is done loading:
+        if (rv$loadingFull || is.null(rv$full_df)) {
+          # If it's not ready, show “Still loading” and do NOT proceed
+          showModal(modalDialog(
+            title = "Still Loading Large Data",
+            "Please wait – the large dataset is still loading in the background.
+             Try again once it's finished.",
+            easyClose = TRUE
+          ))
+          return()
+        }
+        
         # Wrap everything in a withProgress block
         withProgress(message = "Generating plots...", value = 0, {
           
@@ -315,7 +344,7 @@ server <- function(input, output, session) {
             llr_tabs <- list()
             llr_scores <- intersect(selected_scores, c("VARITY", "REVEL", "AlphaMissense"))
             
-            incProgress(0.5, detail = "Reading full LLR data (this might take a while)")
+            #incProgress(0.5, detail = "Reading full LLR data (this might take a while)")
             
             # Retrieve filtered full data
             full_filtered <- full_data()
@@ -328,7 +357,7 @@ server <- function(input, output, session) {
             
             for (score_idx in seq_along(llr_scores)) {
               score <- llr_scores[score_idx]
-              incProgress(0.5+0.5/length(llr_scores), detail = paste("Generating LLR plot for:", score))
+              incProgress(1/length(llr_scores), detail = paste("Generating LLR plot for:", score))
               
               posScores <- na.omit(setNames(
                 selected_df[selected_df$clinvar == TRUE, score],
