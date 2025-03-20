@@ -15,6 +15,7 @@ library(DT)
 ui <- fluidPage(
   
   useShinyjs(),  # Initialize shinyjs for resetting files after error
+  
   # Title
   fluidRow(
     column(
@@ -61,7 +62,7 @@ ui <- fluidPage(
                    checkboxGroupInput("Main_scores", "Select Scores to Include:",
                                       choices = list("VARITY", "REVEL", "AlphaMissense"),
                                       selected = c("VARITY", "REVEL", "AlphaMissense")),
-                   actionButton("Main_plotButton", "Make Precision vs Recall Plot"),
+                   actionButton("Main_plotButton", "Make Plots", , class = "btn btn-primary"),
                    uiOutput("Main_download_buttons")  # To group download buttons
                  ),
                  mainPanel(
@@ -143,13 +144,13 @@ ui <- fluidPage(
                                         ),
                                         selected = c("clinvar", "gnomad")),
                      # Run OpenCRAVAT and fetch the scores
-                     actionButton("fetchButton", "Fetch VEP Data")
+                     actionButton("fetchButton", "Fetch VEP Data", class = "btn btn-primary")
                    ),
                    
                    # selectizeInput("gene", "Select Gene Name:", choices = NULL, options = list(maxOptions = 1000)),
                    checkboxGroupInput("scores", "Select Scores to Include:", choices = NULL, selected = NULL),
                    # checkboxInput("common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
-                   actionButton("plotButton", "Make Precision vs Recall Plot"),
+                   actionButton("plotButton", "Make Plots", class = "btn btn-primary"),
                    uiOutput("download_buttons")  # To group download buttons
                  ),
                  
@@ -182,9 +183,8 @@ ui <- fluidPage(
              fluidRow(
                column(12, offset = 0,
                       h2("About VEPerform"),
-                      p("This tool allows you to evaluate the performance of variant effect predictors for your favorite genes."),
-                      p("VEPerform was developed by Cindy Zhang at the Roth Lab at the University of Pittsburgh."),
-                      p("Citation:")
+                      p("This tool allows you to evaluate the performance of variant effect predictors for your favorite genes, as well as quantify the strength of evidence that these variant effect predictor scores can provide."),
+                      p("VEPerform was developed by Cindy Zhang at the Roth Lab at the University of Pittsburgh.")
                )
              )
     )

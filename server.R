@@ -20,40 +20,29 @@ library(promises)
 plan(multisession)
 
 server <- function(input, output, session) {
-  showModal(modalDialog(
-    title = "Loading Data",
-    "Please wait... The application is loading.",
-    footer = NULL,
-    easyClose = FALSE
-  ))
-  
   plot_data <- reactiveVal(NULL)
   selected_variants <- reactiveVal(NULL)  # Store user-selected variants
-  threshold_data <- reactiveVal(NULL) # for storing PRC thresholds - REFACTOR: include as part of prc data? - jumptag
+  threshold_data <- reactiveVal(NULL) # for storing PRC thresholds - REFACTOR: include as part of prc data?
   
-  # preprocessed is small, so read synchronously
   preprocessed_df <- read.table("preprocessed.csv", sep = ',', header = TRUE, stringsAsFactors = FALSE)
   prcdata <- reactiveVal(preprocessed_df)
   
   rv <- reactiveValues(full_df = NULL, loadingFull = TRUE)
   
-  # Use future to read full.csv async
+  # Read full.csv async
   future({
     df <- fread("full.csv")
     as.data.frame(df)
   }) %...>% (function(big_data) {
-    # Invoked upon success
     rv$full_df <- big_data
     rv$loadingFull <- FALSE
   }) %...!% (function(err) {
-    # Invoked on error
     rv$loadingFull <- FALSE
     showModal(modalDialog(
       title = "Error loading large data",
       paste("Could not load full.csv:", conditionMessage(err))
     ))
   })
-  
   
   # Giant if/else block to handle separate logic for Main App and Advanced
   observe({
@@ -67,7 +56,6 @@ server <- function(input, output, session) {
           updateSelectizeInput(session, "Main_gene", choices = gene_names, selected = character(0), server = TRUE)
         }
       })
-      removeModal() # Remove app loading modal after gene list is updated 
       
       # Update scores - show only if a predictor has at least 1 P/LP and 1 B/LB
       observe({
@@ -103,16 +91,10 @@ server <- function(input, output, session) {
         updateCheckboxGroupInput(session, "Main_scores", choices = available_scores, selected = available_scores)
       })
       
-      observe({
-        req(rv$full_df)  # Ensure data has loaded
-        removeModal()  # Remove loading modal once everything is ready
-      })
-      
-      # walktag - for LLR VUS plots
+      # For LLR VUS plots
       full_data <- reactive({
-        req(input$Main_gene)  # Ensure a gene is selected
-        req(rv$full_df)  # Ensure full dataset is available
-        # Read and filter full.csv for the selected gene
+        req(input$Main_gene)
+        req(rv$full_df)
         #df_full <- read.csv("full.csv", stringsAsFactors = FALSE)
         #df_full$clinvar[df_full$clinvar == "N/A"] <- NA # Treat as actual NA
         df_filtered <- rv$full_df %>% filter(base__gene == input$Main_gene & !is.na(clinvar))
@@ -224,7 +206,7 @@ server <- function(input, output, session) {
             #incProgress(0.3, detail = "Preparing selected data")
             selected_df <- prcfiltered[selected_rows, ]
             
-            # Check that there is at least one P/LP and one B/LB - walktag
+            # Check that there is at least one P/LP and one B/LB
             if (!(any(selected_df$clinvar == "P/LP") && any(selected_df$clinvar == "B/LB"))) {
               removeModal() # remove "Please wait" modal if it's open
               showModal(modalDialog(
@@ -269,7 +251,7 @@ server <- function(input, output, session) {
               #incProgress(0.5, detail = "Generating PRC plot")
               yrobj <- yr2(truth = selected_df[["clinvar"]], scores = selected_df[selected_scores], high = rep(TRUE, length(selected_scores)))
               
-              # Added for threshold calculation - jumptag
+              # Added for threshold calculation
               thresh_ranges <- calculate_thresh_range(yrobj, x = 0.9, balanced = TRUE)
               
               # Store thresholds for rendering
@@ -314,7 +296,7 @@ server <- function(input, output, session) {
               }
             }, width = 600, height = 600, res = 72)
             
-            # Render the threshold table - jumptag
+            # Render the threshold table
             output$Main_thresholdTableUI <- renderUI({
               req(threshold_data())
               
@@ -340,7 +322,7 @@ server <- function(input, output, session) {
               df
             }, rownames = FALSE)
             
-            # LLR Plot - walktag
+            # LLR Plot
             llr_tabs <- list()
             llr_scores <- intersect(selected_scores, c("VARITY", "REVEL", "AlphaMissense"))
             
@@ -349,7 +331,7 @@ server <- function(input, output, session) {
             # Retrieve filtered full data
             full_filtered <- full_data()
 
-            # Renaming for consistency - walktag
+            # Renaming for consistency
             names(full_filtered)[names(full_filtered) == "VEP_varity_r"] <- "VARITY"
             names(full_filtered)[names(full_filtered) == "VEP_alphamissense__pathogenicity"] <- "AlphaMissense"
             names(full_filtered)[names(full_filtered) == "VEP_revel__score"] <- "REVEL"
@@ -369,7 +351,7 @@ server <- function(input, output, session) {
               ))
               
               if (length(posScores) > 0 & length(negScores) > 0) {
-                llrObj <- buildLLR.kernel(posScores, negScores, outlierSuppression=0.01) # Change outlier suppression
+                llrObj <- buildLLR.kernel(posScores, negScores, outlierSuppression=0.001) # Change outlier suppression
                 
                 full_filtered_copy <- full_filtered
                 full_filtered_copy$llr <- llrObj$llr(full_filtered_copy[[score]]) # full_filtered_copy has llr values
@@ -741,7 +723,7 @@ server <- function(input, output, session) {
         req(plot_data())  # Only show if plot_data has been generated
         
         tagList(
-          actionButton("Main_helpButton", "Plot Explanation", class = "btn-info"),
+          actionButton("Main_helpButton", "Plot Explanation"),
           helpText(HTML("<span style='color:black;'><strong>Download Options: </strong></span>")),
           downloadButton("Main_downloadAllPlotsZIP", "Download All Plots (ZIP)"),
           downloadButton("Main_downloadAllCSVsZIP", "Download All CSVs (ZIP)")
@@ -992,7 +974,7 @@ server <- function(input, output, session) {
       rv$prcdata_fetch <- reactiveVal(NULL)
       rv$plot_data <- reactiveVal(NULL)
       rv$variant_data_df <- reactiveVal(NULL)
-      rv$threshold_data <- reactiveVal(NULL) # for storing PRC thresholds - REFACTOR: include as part of prc data? - jumptag
+      rv$threshold_data <- reactiveVal(NULL) # for storing PRC thresholds - REFACTOR: include as part of prc data?
       
       # Observe 'input$input_type' to reset reactive values and inputs when user switches option
       observeEvent(input$input_type, {
@@ -1339,7 +1321,7 @@ server <- function(input, output, session) {
           exclude_common_variants <- input$common_variant_filter
           selected_scores <- input$scores
           
-          if (isTRUE(exclude_common_variants) && "gnomAD_AF" %in% colnames(df)) { # walktag - added isTRUE
+          if (isTRUE(exclude_common_variants) && "gnomAD_AF" %in% colnames(df)) { # Added isTRUE
             df <- df[is.na(df$gnomAD_AF) | df$gnomAD_AF <= 0.005, ]
           }
           
@@ -1362,7 +1344,7 @@ server <- function(input, output, session) {
           tryCatch({
             yrobj <- yr2(truth = prcfiltered[["clinvar"]], scores = prcfiltered[selected_scores], high = rep(TRUE, length(selected_scores)))
             
-            # Added for threshold calculation - jumptag
+            # Added for threshold calculation
             thresh_ranges <- calculate_thresh_range(yrobj, x = 0.9, balanced = TRUE)
             
             # Store thresholds for rendering
@@ -1427,7 +1409,7 @@ server <- function(input, output, session) {
             }
           }, width = 600, height = 600, res = 72)
           
-          # Render the threshold table - jumptag
+          # Render the threshold table
           output$thresholdTableUI <- renderUI({
             req(threshold_data())
             
@@ -1453,15 +1435,9 @@ server <- function(input, output, session) {
             df
           }, rownames = FALSE)
           
-          # LLR Plot - walktag
           ##############################################################
-          ## ADDED SECTION: LLR generation, with progress bar and tabs ##
+          ## ADDED LLR SECTION                                        ##
           ##############################################################
-          
-          # We'll use the final data used for the PRC (plot_info$prcfiltered)
-          # as the training set for LLR. Then we apply that LLR to the full
-          # advanced data (prcdata()) so the user sees classification categories
-          # for P/LP, B/LB, VUS, Conflicting, etc.
           
           # 1) Initialize list for LLR tabs
           llr_tabs <- list()
@@ -1485,7 +1461,7 @@ server <- function(input, output, session) {
             ))
 
             if (length(posScores) > 0 & length(negScores) > 0) {
-              llrObj <- buildLLR.kernel(posScores, negScores, outlierSuppression=0.01) # Change outlier suppression
+              llrObj <- buildLLR.kernel(posScores, negScores, outlierSuppression=0.001) # Change outlier suppression
               
               full_filtered_copy <- full_filtered
               full_filtered_copy$llr <- llrObj$llr(full_filtered_copy[[score]]) # full_filtered_copy has llr values
@@ -1515,9 +1491,6 @@ server <- function(input, output, session) {
               crossings_df <- findLLRcrossings(llrObj$llr, llrTs, x_range)
               
               # Create the stacked bar plot of clinvar vs category
-              # Assign colors as requested:
-              # dark blue for benign_strong, red for patho_vstrong, grey for none
-              # other categories lighter shades in between
               category_colors <- c(
                 "benign_strong"   = "dodgerblue",
                 "benign_support"  = "lightblue",
@@ -1573,7 +1546,7 @@ server <- function(input, output, session) {
                 
                 # Render the stacked bar chart
                 output[[plot_stack_id]] <- renderPlot({
-                  # Make sure we have factor ordering if needed
+                  # Factor ordering if needed
                   full_filtered_copy_local$clinvar <- factor(full_filtered_copy_local$clinvar, 
                                                              levels = c("P/LP", "B/LB", "VUS", "Conflicting"))
                   ggplot(full_filtered_copy_local, aes(x=clinvar, fill=category)) +
@@ -1590,7 +1563,7 @@ server <- function(input, output, session) {
                 })
                 
                 # -----------------------------------
-                # 3) DEFINE DOWNLOAD HANDLERS (NEW)
+                # 3) DEFINE DOWNLOAD HANDLERS
                 # -----------------------------------
                 
                 # 3a) Download LLR (PNG)
@@ -1742,7 +1715,7 @@ server <- function(input, output, session) {
         })
       })
       
-      # Download logic 
+      # PRC Download logic 
       output$PRC_Download_Buttons <- renderUI({
         req(rv$plot_data())  # Ensure the plot data exists before showing buttons
         
@@ -1760,7 +1733,7 @@ server <- function(input, output, session) {
         )
       })
       
-      # Download PNG logic for Main App
+      # Download PNG logic
       output$downloadPlotPNG <- downloadHandler(
         filename = function() {
           paste("PRC_plot_", Sys.Date(), ".png", sep = "")
@@ -1869,7 +1842,7 @@ server <- function(input, output, session) {
         req(rv$plot_data())  # Only show if plot_data has been generated
         
         tagList(
-          actionButton("helpButton", "Plot Explanation", class = "btn-info"),
+          actionButton("helpButton", "Plot Explanation"),
           helpText(HTML("<span style='color:black;'><strong>Download Options: </strong></span>")),
           downloadButton("downloadAllPlotsZIP", "Download All Plots (ZIP)"),
           downloadButton("downloadAllCSVsZIP", "Download All CSVs (ZIP)")
@@ -1984,7 +1957,6 @@ server <- function(input, output, session) {
         }
       )
       
-      
       ### ---------------------- DOWNLOAD ALL CSVS AS ZIP -------------------------------- ###
       output$downloadAllCSVsZIP <- downloadHandler(
         filename = function() {
@@ -2023,7 +1995,7 @@ server <- function(input, output, session) {
           
           # 3) Save LLR CSV
           llr_scores <- paste0("VEP_", plot_info$selected_scores)
-          full_filtered <- prcdata()  # Use prcdata() instead of full_data()
+          full_filtered <- prcdata()
           
           # Ensure full_filtered is not NULL
           if (!is.null(full_filtered) && nrow(full_filtered) > 0) {
@@ -2100,6 +2072,5 @@ server <- function(input, output, session) {
         ))
       })
     }
-    
   })
 }
