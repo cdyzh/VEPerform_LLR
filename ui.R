@@ -148,7 +148,8 @@ ui <- fluidPage(
                    ),
                    
                    # selectizeInput("gene", "Select Gene Name:", choices = NULL, options = list(maxOptions = 1000)),
-                   checkboxGroupInput("scores", "Select Scores to Include:", choices = NULL, selected = NULL),
+                   # checkboxGroupInput("scores", "Select Scores to Include:", choices = NULL, selected = NULL),
+                   uiOutput("score_selector_ui"),
                    # checkboxInput("common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
                    actionButton("plotButton", "Make Plots", class = "btn btn-primary"),
                    uiOutput("download_buttons")  # To group download buttons
