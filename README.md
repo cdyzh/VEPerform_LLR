@@ -8,7 +8,7 @@
   - Visualize the performance of VEP scores across multiple thresholds using BRPCs.
   - Compare multiple predictors simultaneously.
   
-- **Log Likelihood Ratio (LLR) Calculation (In Development)**:
+- **Log Likelihood Ratio (LLR) Calculation**:
   - Calculate LLR of pathogenicity using kernel density estimation (or Gaussian distributions) using the same set of variants.
   - Generate LLR plots for multiple VEPs.
 
