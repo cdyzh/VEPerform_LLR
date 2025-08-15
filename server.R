@@ -18,7 +18,7 @@ library(future)
 library(promises)
 
 
-plan(multisession)
+#plan(multisession)
 
 server <- function(input, output, session) {
   plot_data <- reactiveVal(NULL)
@@ -31,19 +31,19 @@ server <- function(input, output, session) {
   rv <- reactiveValues(full_df = NULL, loadingFull = TRUE)
   
   # Read full.csv async
-  future({
-    df <- fread("full.csv")
-    as.data.frame(df)
-  }) %...>% (function(big_data) {
-    rv$full_df <- big_data
-    rv$loadingFull <- FALSE
-  }) %...!% (function(err) {
-    rv$loadingFull <- FALSE
-    showModal(modalDialog(
-      title = "Error loading large data",
-      paste("Could not load full.csv:", conditionMessage(err))
-    ))
-  })
+#  future({
+#    df <- fread("full.csv")
+#    as.data.frame(df)
+#  }) %...>% (function(big_data) {
+#    rv$full_df <- big_data
+#    rv$loadingFull <- FALSE
+#  }) %...!% (function(err) {
+#    rv$loadingFull <- FALSE
+#    showModal(modalDialog(
+#      title = "Error loading large data",
+#      paste("Could not load full.csv:", conditionMessage(err))
+#    ))
+#  })
   
   # Giant if/else block to handle separate logic for Main App and Advanced
   observe({
@@ -53,7 +53,7 @@ server <- function(input, output, session) {
       observe({
         df <- prcdata()
         if (!is.null(df)) {
-          gene_names <- unique(df$base__gene)
+          gene_names <- unique(df$base__gene) # hottag: change to name of csv with gene names (or just sort preprocessed by number of rows)
           updateSelectizeInput(session, "Main_gene", choices = gene_names, selected = character(0), server = TRUE)
         }
       })
@@ -95,10 +95,18 @@ server <- function(input, output, session) {
       # For LLR VUS plots
       full_data <- reactive({
         req(input$Main_gene)
-        req(rv$full_df)
-        #df_full <- read.csv("full.csv", stringsAsFactors = FALSE)
-        #df_full$clinvar[df_full$clinvar == "N/A"] <- NA # Treat as actual NA
-        df_filtered <- rv$full_df %>% filter(base__gene == input$Main_gene & !is.na(clinvar))
+        
+        # Sanitize gene name for safe file access (same as used when saving)
+        safe_gene_name <- gsub("[^A-Za-z0-9_-]", "_", input$Main_gene)
+        file_path <- file.path("genes_output", paste0(safe_gene_name, ".csv"))
+        
+        # Check that the file exists before reading
+        req(file.exists(file_path))
+        
+        # Read the specific gene CSV
+        df_filtered <- read.csv(file_path, stringsAsFactors = FALSE) %>%
+          filter(!is.na(clinvar))  # Optional: remove rows where clinvar is NA
+        
         return(df_filtered)
       })
       
@@ -173,16 +181,16 @@ server <- function(input, output, session) {
       # After confirmation from the modal
       observeEvent(input$confirm_selection, {
         # (a) Check if the large data is done loading:
-        if (rv$loadingFull || is.null(rv$full_df)) {
+        #if (rv$loadingFull || is.null(rv$full_df)) {
           # If it's not ready, show “Still loading” and do NOT proceed
-          showModal(modalDialog(
-            title = "Still Loading Large Data",
-            "Please wait – the large dataset is still loading in the background.
-             Try again once it's finished.",
-            easyClose = TRUE
-          ))
-          return()
-        }
+         # showModal(modalDialog(
+          #  title = "Still Loading Large Data",
+           # "Please wait – the large dataset is still loading in the background.
+            # Try again once it's finished.",
+          #  easyClose = TRUE
+          #))
+          #return()
+        #}
         
         # Wrap everything in a withProgress block
         withProgress(message = "Generating plots...", value = 0, {
@@ -1285,7 +1293,7 @@ server <- function(input, output, session) {
           
           # Insert the checkbox
           insertUI(
-            selector = "#scores",
+            selector = "#score_selector_ui",
             where = "beforeBegin",
             ui = div(id = "gnomad_filter_wrapper",
                      checkboxInput("common_variant_filter", 
@@ -1309,7 +1317,7 @@ server <- function(input, output, session) {
         output$score_selector_ui <- renderUI({
           fluidRow(
             column(6,
-                   tags$b("Variant Effect Predictor"),
+                   tags$b("Variant Effect", tags$br(), "Predictor"),
                    tagList(
                      lapply(predictor_columns, function(score) {
                        score_id <- gsub("[^A-Za-z0-9]", "_", score)
@@ -1520,7 +1528,7 @@ server <- function(input, output, session) {
             ))
 
             if (length(posScores) > 0 & length(negScores) > 0) {
-              llrObj <- buildLLR.kernel(posScores, negScores, outlierSuppression=0.001) # Change outlier suppression
+              llrObj <- buildLLR.kernel(posScores, negScores, bw=0.5, outlierSuppression=0.001) # Change outlier suppression
               
               full_filtered_copy <- full_filtered
               full_filtered_copy$llr <- llrObj$llr(full_filtered_copy[[score]]) # full_filtered_copy has llr values
